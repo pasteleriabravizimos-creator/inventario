@@ -47,6 +47,8 @@
     .split{display:grid;grid-template-columns:1fr 1fr;gap:10px}
     .right{margin-left:auto}
     .small{font-size:12px;color:var(--muted)}
+    .modal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:50}
+    .modal .box{width:min(520px,92vw);background:#0b1220;border:1px solid var(--line);border-radius:16px;padding:14px}
     @media (max-width: 980px){.grid{grid-template-columns:1fr}.kpi{grid-template-columns:repeat(2,1fr)}.split{grid-template-columns:1fr}}
   </style>
 </head>
@@ -57,11 +59,11 @@
     <div class="row" style="align-items:flex-end">
       <div>
         <h1>ERP Web Inventario – BRAVIZIMO’S</h1>
-        <div class="sub">Productos • Kardex • Recetas • Producción/Ventas • Reporte por categoría • Export/Import (JSON)</div>
+        <div class="sub">Importa Excel • Insumos • Productos de venta • Recetas/Packs • Producción=Venta • Kardex • Reportes por fecha</div>
       </div>
       <div class="right row" style="gap:8px;justify-content:flex-end">
-        <button class="btn" id="btnExport">Exportar JSON</button>
-        <button class="btn" id="btnImport">Importar JSON</button>
+        <button class="btn primary" id="btnImportExcel">Importar Excel</button>
+        <button class="btn" id="btnLogin">Modo / Acceso</button>
         <button class="btn danger" id="btnReset">Reset</button>
       </div>
     </div>
@@ -72,18 +74,22 @@
   <div class="grid">
     <nav class="card" id="nav">
       <div class="pill">📦 ERP Menú</div>
-      <button data-view="dashboard" class="active">📊 Dashboard</button>
-      <button data-view="productos">🧾 Productos</button>
+      <button data-view="dashboard" class="active" data-admin="1">📊 Dashboard</button>
+      <button data-view="insumos" data-admin="1">🧾 Insumos (Inventario)</button>
+      <button data-view="ventasProductos" data-admin="1">💲 Productos de venta</button>
       <button data-view="kardex">🧱 Kardex (Movimientos)</button>
-      <button data-view="recetas">🍽️ Recetas</button>
-      <button data-view="produccion">👩‍🍳 Producción / Ventas</button>
-      <button data-view="reportes">🧩 Reportes por categoría</button>
+      <button data-view="recetas" data-admin="1">🍽️ Recetas & Packs</button>
+      <button data-view="produccion">👩‍🍳 Producción / Pedidos (Venta)</button>
+      <button data-view="reportes">🧩 Reportes por fecha</button>
+
       <div class="small" style="margin-top:10px">
-        Tips:
+        <b>Import Excel esperado:</b>
         <ul>
-          <li>El stock se calcula desde Kardex.</li>
-          <li>Ventas/Producción descuentan insumos por receta.</li>
-          <li>Todo se guarda en tu navegador.</li>
+          <li><code>insumos</code>: Ingrediente, Unidad, Stock Inicial, Costo Unitario</li>
+          <li><code>precio</code>: Producto, Precio de Venta</li>
+          <li><code>receta</code>: Producto, Ingrediente, Unidad, Cantidad_por_unidad</li>
+          <li><code>pack</code>: PACK, PRODUCTO, CANT</li>
+          <li><code>produccion</code>: F. Emisión o F. Entrega, producto, Cantidad</li>
         </ul>
       </div>
     </nav>
@@ -94,49 +100,122 @@
   </div>
 </div>
 
-<input type="file" id="fileImport" accept="application/json" style="display:none" />
+<input type="file" id="fileExcel" accept=".xlsx,.xls" style="display:none" />
+
+<div class="modal" id="modalLogin">
+  <div class="box">
+    <div class="row">
+      <div class="pill">🔐 Acceso</div>
+      <div class="right"><button class="btn" id="btnCloseLogin">Cerrar</button></div>
+    </div>
+    <div class="small" style="margin-top:6px">
+      <b>Admin</b> ve todo. <b>Personal</b> solo registra ingresos/salidas en Kardex.
+      Puedes cambiar los PIN en “Configuración” luego (por ahora defaults).
+    </div>
+    <div class="row" style="margin-top:10px">
+      <div>
+        <label>Modo</label>
+        <select id="loginRole">
+          <option value="admin">ADMIN</option>
+          <option value="staff">PERSONAL</option>
+        </select>
+      </div>
+      <div>
+        <label>PIN</label>
+        <input id="loginPin" type="password" placeholder="Ej: 1234" />
+      </div>
+    </div>
+    <div class="row">
+      <button class="btn primary" id="btnDoLogin">Ingresar</button>
+      <button class="btn danger" id="btnLogout">Salir (modo lectura)</button>
+    </div>
+  </div>
+</div>
+
+<!-- SheetJS para leer Excel directo -->
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
 <script>
 /** ==========================
- *  Mini ERP (localStorage)
+ *  ERP BRAVIZIMO'S (Excel-first)
  *  ==========================
- *  Datos:
- *   - products: [{id, sku, name, category, unitBase, minStock, cost, price, active}]
- *   - movements: [{id, dateISO, type, productId, qtyBase, note, ref, unitCost}]
- *   - recipes: [{id, productFinalName, lines:[{productId, qtyPerUnit}]}]
- *   - sales: [{id,dateISO, productFinalName, qty, channel, note}]
- *   - productions: [{id,dateISO, productFinalName, qty, note}]
+ *  state:
+ *   - insumos: [{id, name, category, unitBase, stockMin, cost, active}]
+ *   - saleProducts: [{id, name, price, active}]
+ *   - recipes: [{id, saleName, lines:[{insumoId, qtyPerUnitBase}]}]
+ *   - packs: [{id, packName, lines:[{saleName, qty}]}]
+ *   - kardex: [{id,dateISO,type,insumoId,qtyBase,note,ref}]
+ *   - productionOrders: [{id,dateISO, kind:'PROD', itemName, qty, note, source:'manual|excel'}]
+ *   - config: {adminPin, staffPin, role:'readonly|admin|staff'}
  */
-
-const STORAGE_KEY = "bravizimos_erp_v1";
-
-const TYPES = {
-  INGRESO: "INGRESO",
-  SALIDA: "SALIDA",
-  AJUSTE: "AJUSTE",
-  MERMA: "MERMA",
-  PRODUCCION: "PRODUCCION",
-  VENTA: "VENTA"
-};
+const STORAGE_KEY = "bravizimos_erp_excel_v2";
+const TYPES = { INGRESO:"INGRESO", SALIDA:"SALIDA", MERMA:"MERMA", AJUSTE:"AJUSTE", PRODUCCION:"PRODUCCION" };
 
 function uid(){ return Math.random().toString(16).slice(2)+Date.now().toString(16); }
+
+function todayISO(){
+  const d = new Date();
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  return d.toISOString().slice(0,10);
+}
+function normalize(s){ return String(s||"").trim().toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g,""); }
+function parseNum(v){
+  if (v === null || v === undefined) return 0;
+  if (typeof v === "number") return isFinite(v) ? v : 0;
+  let s = String(v).trim();
+  if (!s) return 0;
+
+  // Manejo de formatos raros tipo "285.714.286" o "8,57E+00"
+  // 1) si tiene coma y punto: puntos miles, coma decimal
+  if (s.includes(",") && s.includes(".")) {
+    s = s.replace(/\./g,"").replace(",",".");
+    const n = Number(s);
+    return isFinite(n) ? n : 0;
+  }
+  // 2) si tiene solo coma: coma decimal
+  if (s.includes(",") && !s.includes(".")) {
+    s = s.replace(",",".");
+    const n = Number(s);
+    return isFinite(n) ? n : 0;
+  }
+  // 3) si tiene MUCHOS puntos (ej 285.714.286) asumimos miles -> quitamos puntos
+  const dotCount = (s.match(/\./g)||[]).length;
+  if (dotCount >= 2) {
+    s = s.replace(/\./g,"");
+    const n = Number(s);
+    return isFinite(n) ? n : 0;
+  }
+  const n = Number(s);
+  return isFinite(n) ? n : 0;
+}
 
 function loadState(){
   const raw = localStorage.getItem(STORAGE_KEY);
   if (!raw){
-    const init = { products: [], movements: [], recipes: [], sales: [], productions: [] };
+    const init = {
+      insumos: [],
+      saleProducts: [],
+      recipes: [],
+      packs: [],
+      kardex: [],
+      productionOrders: [],
+      config: { adminPin:"1234", staffPin:"0000", role:"readonly" }
+    };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(init));
     return init;
   }
-  try { return JSON.parse(raw); } catch {
-    const init = { products: [], movements: [], recipes: [], sales: [], productions: [] };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(init));
-    return init;
+  try { return JSON.parse(raw); }
+  catch {
+    localStorage.removeItem(STORAGE_KEY);
+    return loadState();
   }
 }
-function saveState(state){ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
-
+function saveState(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
 let state = loadState();
+
+function role(){ return state.config?.role || "readonly"; }
+function isAdmin(){ return role()==="admin"; }
+function isStaff(){ return role()==="staff"; }
 
 function fmtMoney(n){
   if (n === null || n === undefined || isNaN(n)) return "—";
@@ -145,76 +224,410 @@ function fmtMoney(n){
 function fmtQty(n, unit){
   if (n === null || n === undefined || isNaN(n)) return "—";
   const v = Number(n);
-  return (Math.abs(v) >= 1 ? v.toFixed(3).replace(/\.?0+$/,"") : v.toFixed(3)) + " " + (unit||"");
+  const t = (Math.abs(v) >= 1 ? v.toFixed(3) : v.toFixed(3)).replace(/\.?0+$/,"");
+  return t + " " + (unit||"");
 }
-function todayISO(){
-  const d = new Date();
-  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-  return d.toISOString().slice(0,10);
-}
-function normalize(s){ return String(s||"").trim().toUpperCase(); }
 
-function getProductById(id){ return state.products.find(p=>p.id===id); }
-function productLabel(p){ return `${p.sku} — ${p.name}`; }
+function getInsumoById(id){ return state.insumos.find(x=>x.id===id); }
+function getSaleByName(name){ return state.saleProducts.find(p=>normalize(p.name)===normalize(name) && p.active!==false); }
+function getRecipeBySaleName(name){ return state.recipes.find(r=>normalize(r.saleName)===normalize(name)); }
+function getPackByName(name){ return state.packs.find(p=>normalize(p.packName)===normalize(name)); }
 
-// Stock = suma qtyBase por productId (INGRESO positivo, SALIDA negativo, etc.)
-function stockByProductId(){
+function stockMap(){
   const map = new Map();
-  for (const mv of state.movements){
-    if (!mv.productId) continue;
-    map.set(mv.productId, (map.get(mv.productId)||0) + Number(mv.qtyBase||0));
+  for (const mv of state.kardex){
+    if (!mv.insumoId) continue;
+    map.set(mv.insumoId, (map.get(mv.insumoId)||0) + Number(mv.qtyBase||0));
   }
   return map;
 }
 
-function stockStatus(p, stock){
-  const min = Number(p.minStock||0);
+function stockStatus(ins, stock){
+  const min = Number(ins.stockMin||0);
   if (min <= 0) return {label:"🟢 Normal", cls:"ok"};
   if (stock <= min) return {label:"🔴 Crítico", cls:"crit"};
-  if (stock <= min * 1.5) return {label:"🟡 Mínimo", cls:"min"};
+  if (stock <= min*1.5) return {label:"🟡 Mínimo", cls:"min"};
   return {label:"🟢 Normal", cls:"ok"};
 }
 
-function inventoryValue(){
-  const stockMap = stockByProductId();
-  let costTotal=0, saleTotal=0;
-  for (const p of state.products.filter(p=>p.active!==false)){
-    const st = stockMap.get(p.id)||0;
-    costTotal += st * Number(p.cost||0);
-    saleTotal += st * Number(p.price||0);
-  }
-  return {costTotal, saleTotal};
-}
-
-function groupByCategory(){
-  const stockMap = stockByProductId();
+function inventoryValueByCategory(){
+  const st = stockMap();
   const out = {};
-  for (const p of state.products.filter(p=>p.active!==false)){
-    const cat = p.category || "Sin categoría";
-    const st = stockMap.get(p.id)||0;
-    if (!out[cat]) out[cat] = {stock:0, cost:0, sale:0, items:0};
-    out[cat].stock += st;
-    out[cat].cost += st*Number(p.cost||0);
-    out[cat].sale += st*Number(p.price||0);
+  for (const ins of state.insumos.filter(x=>x.active!==false)){
+    const cat = ins.category || "Sin categoría";
+    const qty = st.get(ins.id)||0;
+    if (!out[cat]) out[cat] = {items:0, costValue:0, stockSum:0};
     out[cat].items += 1;
+    out[cat].stockSum += qty;
+    out[cat].costValue += qty * Number(ins.cost||0);
   }
   return out;
 }
 
+function totalInventoryCost(){
+  const st = stockMap();
+  let total = 0;
+  for (const ins of state.insumos.filter(x=>x.active!==false)){
+    total += (st.get(ins.id)||0) * Number(ins.cost||0);
+  }
+  return total;
+}
+
 /** ==========================
- *  Vistas UI
+ *  Producción (Venta) => descuenta insumos por receta
+ *   - Si itemName es PACK: explota productos y descuenta por recetas de cada producto.
+ *   - Si itemName es producto de venta: descuenta por receta.
+ *  ========================== */
+function applyProductionAsSale(dateISO, itemName, qty, note, source){
+  const n = Number(qty||0);
+  if (!n) throw new Error("Cantidad inválida.");
+  const d = dateISO || todayISO();
+
+  state.productionOrders.push({ id:uid(), dateISO:d, kind:"VENTA", itemName, qty:n, note:note||"", source:source||"manual" });
+
+  // PACK?
+  const pack = getPackByName(itemName);
+  if (pack){
+    for (const line of pack.lines){
+      const saleName = line.saleName;
+      const qSale = Number(line.qty||0) * n;
+      consumeRecipeOrWarn(d, saleName, qSale, `PACK ${itemName}`, note);
+    }
+    saveState();
+    return;
+  }
+  // Producto venta normal
+  consumeRecipeOrWarn(d, itemName, n, "VENTA/PRODUCCION", note);
+  saveState();
+}
+
+function consumeRecipeOrWarn(dateISO, saleName, qtySale, ref, note){
+  const recipe = getRecipeBySaleName(saleName);
+  if (!recipe){
+    // registra pedido igual, pero sin descuento
+    state.kardex.push({
+      id: uid(),
+      dateISO,
+      type: "VENTA_SIN_RECETA",
+      insumoId: null,
+      qtyBase: 0,
+      note: `⚠ Sin receta: ${saleName} x ${qtySale}. ${note||""}`.trim(),
+      ref
+    });
+    return;
+  }
+  for (const l of recipe.lines){
+    const ins = getInsumoById(l.insumoId);
+    const consume = Number(l.qtyPerUnitBase||0) * Number(qtySale||0);
+    if (!consume) continue;
+    state.kardex.push({
+      id: uid(),
+      dateISO,
+      type: TYPES.PRODUCCION,
+      insumoId: l.insumoId,
+      qtyBase: -Math.abs(consume),
+      note: `${ref}: ${saleName} x ${qtySale}. ${note||""}`.trim(),
+      ref: saleName
+    });
+  }
+}
+
+/** ==========================
+ *  Reporte por fecha: costo / venta / insumos usados
+ *  ========================== */
+function computeReport(dateFrom, dateTo){
+  const from = dateFrom || "0000-01-01";
+  const to = dateTo || "9999-12-31";
+
+  // pedidos/producción (ventas)
+  const orders = state.productionOrders.filter(o=>o.dateISO>=from && o.dateISO<=to);
+
+  // consumo de insumos (kardex PRODUCCION)
+  const st = stockMap();
+  const insumoUsed = new Map(); // insumoId -> qty consumida (positiva)
+  for (const mv of state.kardex){
+    if (mv.dateISO < from || mv.dateISO > to) continue;
+    if (mv.type !== TYPES.PRODUCCION) continue;
+    if (!mv.insumoId) continue;
+    const used = Math.abs(Number(mv.qtyBase||0));
+    insumoUsed.set(mv.insumoId, (insumoUsed.get(mv.insumoId)||0) + used);
+  }
+
+  // costo total insumos usados
+  let costUsed = 0;
+  for (const [insId, qty] of insumoUsed.entries()){
+    const ins = getInsumoById(insId);
+    costUsed += qty * Number(ins?.cost||0);
+  }
+
+  // venta total (por precios)
+  let salesTotal = 0;
+  for (const o of orders){
+    const pack = getPackByName(o.itemName);
+    if (pack){
+      // precio del pack = suma( producto precio * cant * qty order )
+      let packPrice = 0;
+      for (const line of pack.lines){
+        const sale = getSaleByName(line.saleName);
+        packPrice += (Number(sale?.price||0) * Number(line.qty||0));
+      }
+      salesTotal += packPrice * Number(o.qty||0);
+    }else{
+      const sale = getSaleByName(o.itemName);
+      salesTotal += Number(sale?.price||0) * Number(o.qty||0);
+    }
+  }
+
+  const margin = salesTotal - costUsed;
+
+  // faltantes vs stock actual
+  const stNow = stockMap();
+  const faltantes = [];
+  for (const [insId, qtyUsed] of insumoUsed.entries()){
+    const ins = getInsumoById(insId);
+    const have = stNow.get(insId)||0;
+    if (qtyUsed > have){
+      faltantes.push({ins, need: qtyUsed, have, diff: qtyUsed - have});
+    }
+  }
+  faltantes.sort((a,b)=>b.diff-a.diff);
+
+  return { orders, insumoUsed, costUsed, salesTotal, margin, faltantes, stNow };
+}
+
+/** ==========================
+ *  Importador Excel (tu archivo)
+ *  ========================== */
+document.getElementById("btnImportExcel").addEventListener("click", ()=> {
+  if (!isAdmin()){
+    alert("Solo ADMIN puede importar Excel.");
+    return;
+  }
+  document.getElementById("fileExcel").click();
+});
+
+document.getElementById("fileExcel").addEventListener("change", async (e)=>{
+  const file = e.target.files?.[0];
+  if (!file) return;
+  try{
+    const data = await file.arrayBuffer();
+    const wb = XLSX.read(data, {type:"array"});
+
+    // Helpers
+    const sheetToJson = (name) => {
+      const sh = wb.Sheets[name];
+      if (!sh) return [];
+      return XLSX.utils.sheet_to_json(sh, {defval:null});
+    };
+
+    const insumos = sheetToJson("insumos");
+    const precio = sheetToJson("precio");
+    const receta = sheetToJson("receta");
+    const pack = sheetToJson("pack");
+    const produccion = sheetToJson("produccion");
+
+    // 1) INSUMOS -> inventario base (no borra historial, crea nuevo "ingreso inicial" si trae stock)
+    if (insumos.length){
+      // index por nombre
+      const byName = new Map(state.insumos.map(x=>[normalize(x.name), x]));
+
+      for (const r of insumos){
+        const name = r["Ingrediente"] || r["ingrediente"] || r["INSUMO"] || r["Insumo"];
+        if (!name) continue;
+        const unitBase = (r["Unidad"] || "UND").toString().toUpperCase();
+        const stockInit = parseNum(r["Stock Inicial"]);
+        const cost = parseNum(r["Costo Unitario"]);
+
+        let item = byName.get(normalize(name));
+        if (!item){
+          item = {
+            id: uid(),
+            name: String(name).trim(),
+            category: "INSUMOS",
+            unitBase: unitBase,
+            stockMin: 0,
+            cost: cost,
+            active: true
+          };
+          state.insumos.push(item);
+          byName.set(normalize(name), item);
+        } else {
+          item.unitBase = unitBase || item.unitBase;
+          if (cost) item.cost = cost;
+          item.active = true;
+        }
+
+        // si hay stock inicial, registramos ingreso inicial (solo si aún no existe algo igual hoy)
+        if (stockInit){
+          state.kardex.push({
+            id: uid(),
+            dateISO: todayISO(),
+            type: TYPES.INGRESO,
+            insumoId: item.id,
+            qtyBase: Math.abs(stockInit),
+            note: "Carga inicial desde Excel (insumos)",
+            ref: "IMPORT_EXCEL"
+          });
+        }
+      }
+    }
+
+    // 2) PRECIO -> productos de venta
+    if (precio.length){
+      const bySale = new Map(state.saleProducts.map(x=>[normalize(x.name), x]));
+      for (const r of precio){
+        const name = r["Producto"] || r["PRODUCTO"];
+        if (!name) continue;
+        const price = parseNum(r["Precio de Venta"]);
+        let p = bySale.get(normalize(name));
+        if (!p){
+          p = { id:uid(), name:String(name).trim(), price: price || 0, active:true };
+          state.saleProducts.push(p);
+          bySale.set(normalize(name), p);
+        } else {
+          if (price) p.price = price;
+          p.active = true;
+        }
+      }
+    }
+
+    // 3) RECETA -> recetas (producto venta -> insumos)
+    if (receta.length){
+      // map insumo por nombre
+      const insByName = new Map(state.insumos.map(x=>[normalize(x.name), x]));
+      const recipesBySale = new Map(state.recipes.map(r=>[normalize(r.saleName), r]));
+
+      for (const r of receta){
+        const saleName = r["Producto"] || r["PRODUCTO"];
+        const ingName = r["Ingrediente"] || r["INGREDIENTE"];
+        if (!saleName || !ingName) continue;
+
+        const qtyPerUnit = parseNum(r["Cantidad_por_unidad"]);
+        if (!qtyPerUnit) continue;
+
+        const ins = insByName.get(normalize(ingName));
+        if (!ins) continue;
+
+        let rec = recipesBySale.get(normalize(saleName));
+        if (!rec){
+          rec = { id:uid(), saleName:String(saleName).trim(), lines:[] };
+          state.recipes.push(rec);
+          recipesBySale.set(normalize(saleName), rec);
+        }
+        // agrega/actualiza línea
+        const existing = rec.lines.find(l=>l.insumoId===ins.id);
+        if (existing) existing.qtyPerUnitBase = qtyPerUnit;
+        else rec.lines.push({insumoId: ins.id, qtyPerUnitBase: qtyPerUnit});
+      }
+
+      // orden bonito de líneas por nombre insumo
+      for (const r of state.recipes){
+        r.lines.sort((a,b)=>{
+          const A = getInsumoById(a.insumoId)?.name || "";
+          const B = getInsumoById(b.insumoId)?.name || "";
+          return A.localeCompare(B);
+        });
+      }
+    }
+
+    // 4) PACK -> packs (packName -> productos venta + cant)
+    if (pack.length){
+      const packsByName = new Map(state.packs.map(p=>[normalize(p.packName), p]));
+      for (const r of pack){
+        const packName = r["PACK"] || r["Pack"] || r["pack"];
+        const prod = r["PRODUCTO"] || r["Producto"];
+        const cant = parseNum(r["CANT"]);
+        if (!packName || !prod || !cant) continue;
+
+        let pk = packsByName.get(normalize(packName));
+        if (!pk){
+          pk = { id:uid(), packName:String(packName).trim(), lines:[] };
+          state.packs.push(pk);
+          packsByName.set(normalize(packName), pk);
+        }
+        pk.lines.push({ saleName:String(prod).trim(), qty:cant });
+      }
+      // orden bonito de líneas
+      for (const p of state.packs){
+        p.lines.sort((a,b)=>a.saleName.localeCompare(b.saleName));
+      }
+    }
+
+    // 5) PRODUCCION -> pedidos (venta) y descuenta stock
+    // Nota: No re-importar duplicado si vuelves a cargar el mismo Excel.
+    if (produccion.length){
+      // detecta columnas fecha y producto/cantidad
+      for (const r of produccion){
+        const dateCell = r["F. Emisión"] || r["F. Entrega"] || r["Fecha"] || r["F. Emision"];
+        const prod = r["producto"] || r["Producto"] || r["PRODUCTO"];
+        const qty = parseNum(r["Cantidad"] || r["CANTIDAD"] || r["Cant.Total"] || r["Cant.Total "]);
+        if (!prod || !qty) continue;
+
+        // convierte fecha Excel -> ISO si es Date
+        let d = todayISO();
+        if (dateCell instanceof Date){
+          const dd = new Date(dateCell);
+          dd.setMinutes(dd.getMinutes() - dd.getTimezoneOffset());
+          d = dd.toISOString().slice(0,10);
+        } else if (typeof dateCell === "string" && dateCell.includes("-")) {
+          d = dateCell.slice(0,10);
+        }
+
+        // Evita duplicados simples: mismo día + producto + qty + source excel
+        const exists = state.productionOrders.some(o =>
+          o.source==="excel" && o.dateISO===d && normalize(o.itemName)===normalize(prod) && Number(o.qty)===Number(qty)
+        );
+        if (exists) continue;
+
+        applyProductionAsSale(d, String(prod).trim(), qty, "Importado desde Excel (produccion)", "excel");
+      }
+    }
+
+    saveState();
+    setView("dashboard");
+    alert("✅ Excel importado. Se cargaron insumos, precios, recetas, packs y producción.");
+  }catch(err){
+    console.error(err);
+    alert("Error importando Excel: " + (err?.message || err));
+  }finally{
+    e.target.value = "";
+  }
+});
+
+/** ==========================
+ *  UI / Navegación con roles
  *  ========================== */
 const viewEl = document.getElementById("view");
+
+function applyRoleToMenu(){
+  for (const btn of document.querySelectorAll("#nav button[data-view]")){
+    const adminOnly = btn.getAttribute("data-admin")==="1";
+    if (adminOnly && !isAdmin()){
+      btn.style.display = "none";
+    } else {
+      btn.style.display = "";
+    }
+  }
+  // staff: solo kardex y reportes/produccion (lectura útil)
+  if (isStaff()){
+    document.querySelector('[data-view="kardex"]').style.display = "";
+    document.querySelector('[data-view="produccion"]').style.display = "";
+    document.querySelector('[data-view="reportes"]').style.display = "";
+  }
+}
 
 function setView(name){
   for (const btn of document.querySelectorAll("#nav button")){
     btn.classList.toggle("active", btn.dataset.view === name);
   }
+  applyRoleToMenu();
+
   if (name==="dashboard") renderDashboard();
-  if (name==="productos") renderProductos();
+  if (name==="insumos") renderInsumos();
+  if (name==="ventasProductos") renderSaleProducts();
   if (name==="kardex") renderKardex();
-  if (name==="recetas") renderRecetas();
-  if (name==="produccion") renderProduccionVentas();
+  if (name==="recetas") renderRecetasPacks();
+  if (name==="produccion") renderProduccion();
   if (name==="reportes") renderReportes();
 }
 
@@ -224,326 +637,233 @@ document.getElementById("nav").addEventListener("click", (e)=>{
   setView(b.dataset.view);
 });
 
-// Export/Import/Reset
-document.getElementById("btnExport").addEventListener("click", ()=>{
-  const blob = new Blob([JSON.stringify(state,null,2)], {type:"application/json"});
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = `ERP_BRAVIZIMOS_${todayISO()}.json`;
-  a.click();
-});
-document.getElementById("btnImport").addEventListener("click", ()=>{
-  document.getElementById("fileImport").click();
-});
-document.getElementById("fileImport").addEventListener("change", async (e)=>{
-  const file = e.target.files?.[0];
-  if (!file) return;
-  const txt = await file.text();
-  try{
-    const obj = JSON.parse(txt);
-    if (!obj.products || !obj.movements) throw new Error("Estructura inválida");
-    state = obj;
-    saveState(state);
-    setView("dashboard");
-    alert("Importado ✅");
-  }catch(err){
-    alert("No se pudo importar: " + err.message);
-  }finally{
-    e.target.value = "";
+/** ==========================
+ *  Login modal
+ *  ========================== */
+const modalLogin = document.getElementById("modalLogin");
+document.getElementById("btnLogin").onclick=()=>{ modalLogin.style.display="flex"; };
+document.getElementById("btnCloseLogin").onclick=()=>{ modalLogin.style.display="none"; };
+document.getElementById("btnDoLogin").onclick=()=>{
+  const roleSel = document.getElementById("loginRole").value;
+  const pin = document.getElementById("loginPin").value.trim();
+
+  if (roleSel==="admin" && pin===state.config.adminPin){
+    state.config.role="admin"; saveState(); modalLogin.style.display="none";
+    applyRoleToMenu(); setView("dashboard"); alert("ADMIN ✅");
+    return;
   }
-});
+  if (roleSel==="staff" && pin===state.config.staffPin){
+    state.config.role="staff"; saveState(); modalLogin.style.display="none";
+    applyRoleToMenu(); setView("kardex"); alert("PERSONAL ✅");
+    return;
+  }
+  alert("PIN incorrecto.");
+};
+document.getElementById("btnLogout").onclick=()=>{
+  state.config.role="readonly"; saveState(); modalLogin.style.display="none";
+  applyRoleToMenu(); setView("kardex");
+  alert("Modo lectura.");
+};
+
 document.getElementById("btnReset").addEventListener("click", ()=>{
-  if (!confirm("¿Seguro? Se borrará todo el ERP en este navegador.")) return;
-  state = {products:[], movements:[], recipes:[], sales:[], productions:[]};
-  saveState(state);
+  if (!confirm("¿Seguro? Borrará todo el ERP en este navegador.")) return;
+  localStorage.removeItem(STORAGE_KEY);
+  state = loadState();
+  applyRoleToMenu();
   setView("dashboard");
 });
 
-// ---------- Dashboard ----------
+/** ==========================
+ *  Dashboard
+ *  ========================== */
 function renderDashboard(){
-  const {costTotal, saleTotal} = inventoryValue();
-  const stockMap = stockByProductId();
+  const st = stockMap();
+  const invCost = totalInventoryCost();
 
-  const active = state.products.filter(p=>p.active!==false);
+  // alertas
   let crit=0, min=0;
-  for (const p of active){
-    const st = stockMap.get(p.id)||0;
-    const s = stockStatus(p, st);
+  for (const ins of state.insumos.filter(x=>x.active!==false)){
+    const s = stockStatus(ins, st.get(ins.id)||0);
     if (s.cls==="crit") crit++;
     if (s.cls==="min") min++;
   }
 
+  // faltantes hoy (según producción hoy)
+  const rep = computeReport(todayISO(), todayISO());
+
   viewEl.innerHTML = `
     <div class="kpi">
-      <div class="card"><div class="k">Productos activos</div><div class="v">${active.length}</div></div>
+      <div class="card"><div class="k">Insumos activos</div><div class="v">${state.insumos.filter(x=>x.active!==false).length}</div></div>
       <div class="card"><div class="k">En crítico</div><div class="v">${crit}</div></div>
       <div class="card"><div class="k">En mínimo</div><div class="v">${min}</div></div>
-      <div class="card"><div class="k">Inventario valorizado (costo)</div><div class="v">${fmtMoney(costTotal)}</div></div>
+      <div class="card"><div class="k">Inventario valorizado (costo)</div><div class="v">${fmtMoney(invCost)}</div></div>
     </div>
+
     <div style="height:10px"></div>
+
     <div class="card">
       <div class="row">
-        <div class="pill">📌 Acciones rápidas</div>
-        <button class="btn primary" id="goProd">+ Crear productos</button>
-        <button class="btn" id="goIng">+ Registrar ingreso</button>
-        <button class="btn" id="goVen">+ Registrar venta</button>
+        <div class="pill">📌 Acciones</div>
+        <button class="btn primary" id="goImport">Importar Excel</button>
+        <button class="btn" id="goKardex">Registrar ingreso/salida</button>
+        <button class="btn" id="goProd">Registrar producción (venta)</button>
       </div>
-      <div class="small" style="margin-top:10px">
-        Nota: Para ventas y producción con descuento automático, crea la receta en <b>Recetas</b>.
+      <div class="small" style="margin-top:8px">
+        Para que descuente insumos, el producto debe tener receta (hoja <code>receta</code>) o ser pack (hoja <code>pack</code>).
       </div>
     </div>
+
     <div style="height:10px"></div>
+
     <div class="card">
       <div class="row">
-        <div class="pill">📦 Stock bajo (top)</div>
+        <div class="pill">🚨 Faltantes (hoy) vs producción</div>
         <div class="right muted">${todayISO()}</div>
       </div>
-      <div style="max-height:420px;overflow:auto;margin-top:10px">
-        ${renderLowStockTable(stockMap)}
+      <div style="max-height:360px;overflow:auto;margin-top:10px">
+        ${renderFaltantes(rep.faltantes)}
       </div>
     </div>
   `;
 
-  document.getElementById("goProd").onclick=()=>setView("productos");
-  document.getElementById("goIng").onclick=()=>{ setView("kardex"); prefillMovementType("INGRESO"); };
-  document.getElementById("goVen").onclick=()=>setView("produccion");
+  document.getElementById("goImport").onclick=()=>document.getElementById("btnImportExcel").click();
+  document.getElementById("goKardex").onclick=()=>setView("kardex");
+  document.getElementById("goProd").onclick=()=>setView("produccion");
 }
 
-function renderLowStockTable(stockMap){
-  const rows = state.products
-    .filter(p=>p.active!==false)
-    .map(p=>{
-      const st = stockMap.get(p.id)||0;
-      const stat = stockStatus(p, st);
-      return {p, st, stat};
-    })
-    .sort((a,b)=> (a.st - b.st));
-
-  if (rows.length===0) return `<div class="muted">Aún no hay productos.</div>`;
-
-  const top = rows.slice(0, 20);
-  const trs = top.map(({p,st,stat})=>`
+function renderFaltantes(faltantes){
+  if (!faltantes.length) return `<div class="muted">No hay faltantes según la producción del día.</div>`;
+  const rows = faltantes.slice(0,50).map(x=>`
     <tr>
-      <td>${p.category||"Sin categoría"}</td>
-      <td>${productLabel(p)}</td>
-      <td>${fmtQty(st, p.unitBase)}</td>
-      <td>${fmtMoney(p.cost)}</td>
-      <td><span class="tag ${stat.cls}">${stat.label}</span></td>
+      <td>${x.ins?.name||"—"}</td>
+      <td>${fmtQty(x.need, x.ins?.unitBase||"")}</td>
+      <td>${fmtQty(x.have, x.ins?.unitBase||"")}</td>
+      <td><span class="tag crit">Falta ${fmtQty(x.diff, x.ins?.unitBase||"")}</span></td>
     </tr>
   `).join("");
-
-  return `
-    <table>
-      <thead><tr>
-        <th>Categoría</th><th>Producto</th><th>Stock</th><th>Costo</th><th>Estado</th>
-      </tr></thead>
-      <tbody>${trs}</tbody>
-    </table>
-  `;
+  return `<table><thead><tr><th>Insumo</th><th>Necesario</th><th>Stock</th><th>Estado</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
-// ---------- Productos ----------
-function renderProductos(){
+/** ==========================
+ *  Insumos (inventario)
+ *  ========================== */
+function renderInsumos(){
+  const st = stockMap();
+  const items = state.insumos.filter(x=>x.active!==false).sort((a,b)=> (a.category||"").localeCompare(b.category||"") || a.name.localeCompare(b.name));
+
   viewEl.innerHTML = `
     <div class="row">
-      <div class="pill">🧾 Productos</div>
-      <div class="right">
-        <input id="qProd" placeholder="Buscar producto..." />
-      </div>
+      <div class="pill">🧾 Insumos (Inventario)</div>
+      <div class="right"><input id="qI" placeholder="Buscar insumo..." /></div>
     </div>
-
-    <div class="split" style="margin-top:10px">
-      <div class="card">
-        <div class="pill">➕ Agregar / Editar</div>
-        <div class="row">
-          <div>
-            <label>SKU (código)</label>
-            <input id="pSku" placeholder="Ej: QUESO01" />
-          </div>
-          <div>
-            <label>Unidad base</label>
-            <select id="pUnit">
-              <option value="KG">KG</option>
-              <option value="GR">GR</option>
-              <option value="UND">UND</option>
-              <option value="LT">LT</option>
-              <option value="ML">ML</option>
-            </select>
-          </div>
-        </div>
-        <label>Producto</label>
-        <input id="pName" placeholder="Ej: Queso crema" />
-        <label>Categoría</label>
-        <input id="pCat" placeholder="Ej: Lácteos" />
-        <div class="row">
-          <div>
-            <label>Stock mínimo</label>
-            <input id="pMin" type="number" step="0.001" placeholder="0" />
-          </div>
-          <div>
-            <label>Costo</label>
-            <input id="pCost" type="number" step="0.01" placeholder="0" />
-          </div>
-          <div>
-            <label>Precio venta</label>
-            <input id="pPrice" type="number" step="0.01" placeholder="0" />
-          </div>
-        </div>
-        <div class="row">
-          <button class="btn primary" id="btnSaveProd">Guardar</button>
-          <button class="btn" id="btnClearProd">Limpiar</button>
-          <button class="btn danger" id="btnDeleteProd" disabled>Eliminar</button>
-        </div>
-        <div class="small" id="editHint" style="margin-top:8px">Tip: selecciona un producto de la lista para editar.</div>
-      </div>
-
-      <div class="card">
-        <div class="pill">📋 Lista</div>
-        <div style="max-height:520px;overflow:auto;margin-top:10px" id="prodList"></div>
-      </div>
+    <div style="height:10px"></div>
+    <div class="card">
+      <div class="pill">Listado</div>
+      <div style="max-height:560px;overflow:auto;margin-top:10px" id="insList"></div>
     </div>
   `;
 
-  const prodList = document.getElementById("prodList");
-  const qProd = document.getElementById("qProd");
+  const q = document.getElementById("qI");
+  const insList = document.getElementById("insList");
 
-  let editingId = null;
+  function render(){
+    const qq = normalize(q.value);
+    const rows = items.filter(i=>!qq || normalize(i.name).includes(qq) || normalize(i.category).includes(qq));
+    if (!rows.length){ insList.innerHTML = `<div class="muted">Sin insumos.</div>`; return; }
 
-  function refreshList(){
-    const stockMap = stockByProductId();
-    const q = normalize(qProd.value);
-    const items = state.products
-      .filter(p => (p.active!==false))
-      .filter(p => !q || normalize(p.name).includes(q) || normalize(p.sku).includes(q) || normalize(p.category).includes(q))
-      .sort((a,b)=> a.category.localeCompare(b.category) || a.name.localeCompare(b.name));
-
-    if (items.length===0){
-      prodList.innerHTML = `<div class="muted">Sin productos. Agrega uno.</div>`;
-      return;
-    }
-
-    prodList.innerHTML = `
+    insList.innerHTML = `
       <table>
         <thead><tr>
-          <th>Categoría</th><th>SKU</th><th>Producto</th><th>Stock</th><th>Estado</th>
+          <th>Categoría</th><th>Insumo</th><th>Unidad</th><th>Stock</th><th>Min</th><th>Costo</th><th>Estado</th>
         </tr></thead>
         <tbody>
-          ${items.map(p=>{
-            const st = stockMap.get(p.id)||0;
-            const s = stockStatus(p, st);
+          ${rows.map(i=>{
+            const stock = st.get(i.id)||0;
+            const s = stockStatus(i, stock);
             return `
-              <tr data-id="${p.id}" style="cursor:pointer">
-                <td>${p.category||"Sin categoría"}</td>
-                <td>${p.sku||""}</td>
-                <td>${p.name}</td>
-                <td>${fmtQty(st,p.unitBase)}</td>
+              <tr>
+                <td>${i.category||"INSUMOS"}</td>
+                <td>${i.name}</td>
+                <td>${i.unitBase||""}</td>
+                <td>${fmtQty(stock, i.unitBase)}</td>
+                <td>${fmtQty(Number(i.stockMin||0), i.unitBase)}</td>
+                <td>${fmtMoney(i.cost||0)}</td>
                 <td><span class="tag ${s.cls}">${s.label}</span></td>
-              </tr>`;
+              </tr>
+            `;
           }).join("")}
+        </tbody>
+      </table>
+      <div class="small" style="margin-top:10px">
+        Para ajustar stock o registrar compras/uso, usa <b>Kardex</b>.
+      </div>
+    `;
+  }
+
+  q.oninput=render;
+  render();
+}
+
+/** ==========================
+ *  Productos de venta
+ *  ========================== */
+function renderSaleProducts(){
+  const items = state.saleProducts.filter(x=>x.active!==false).sort((a,b)=>a.name.localeCompare(b.name));
+  viewEl.innerHTML = `
+    <div class="row">
+      <div class="pill">💲 Productos de venta (precios)</div>
+      <div class="right"><input id="qS" placeholder="Buscar producto..." /></div>
+    </div>
+    <div style="height:10px"></div>
+    <div class="card">
+      <div class="pill">Listado</div>
+      <div style="max-height:560px;overflow:auto;margin-top:10px" id="saleList"></div>
+    </div>
+  `;
+  const q = document.getElementById("qS");
+  const saleList = document.getElementById("saleList");
+
+  function render(){
+    const qq = normalize(q.value);
+    const rows = items.filter(p=>!qq || normalize(p.name).includes(qq));
+    saleList.innerHTML = `
+      <table>
+        <thead><tr><th>Producto</th><th>Precio de venta</th><th>¿Tiene receta?</th></tr></thead>
+        <tbody>
+          ${rows.map(p=>{
+            const has = !!getRecipeBySaleName(p.name);
+            return `<tr><td>${p.name}</td><td>${fmtMoney(p.price||0)}</td><td>${has ? "✅" : "⚠️"}</td></tr>`;
+          }).join("") || `<tr><td colspan="3" class="muted">Sin datos</td></tr>`}
         </tbody>
       </table>
     `;
   }
-
-  function fillForm(p){
-    editingId = p.id;
-    document.getElementById("pSku").value = p.sku||"";
-    document.getElementById("pName").value = p.name||"";
-    document.getElementById("pCat").value = p.category||"";
-    document.getElementById("pUnit").value = p.unitBase||"KG";
-    document.getElementById("pMin").value = p.minStock ?? 0;
-    document.getElementById("pCost").value = p.cost ?? 0;
-    document.getElementById("pPrice").value = p.price ?? 0;
-    document.getElementById("btnDeleteProd").disabled = false;
-    document.getElementById("editHint").textContent = "Editando: " + productLabel(p);
-  }
-
-  prodList.addEventListener("click",(e)=>{
-    const tr = e.target.closest("tr[data-id]");
-    if (!tr) return;
-    const p = getProductById(tr.dataset.id);
-    if (p) fillForm(p);
-  });
-
-  document.getElementById("btnClearProd").onclick=()=>{
-    editingId=null;
-    ["pSku","pName","pCat","pMin","pCost","pPrice"].forEach(id=>document.getElementById(id).value="");
-    document.getElementById("pUnit").value="KG";
-    document.getElementById("btnDeleteProd").disabled=true;
-    document.getElementById("editHint").textContent="Tip: selecciona un producto de la lista para editar.";
-  };
-
-  document.getElementById("btnSaveProd").onclick=()=>{
-    const sku = document.getElementById("pSku").value.trim();
-    const name = document.getElementById("pName").value.trim();
-    const category = document.getElementById("pCat").value.trim();
-    const unitBase = document.getElementById("pUnit").value;
-    const minStock = Number(document.getElementById("pMin").value||0);
-    const cost = Number(document.getElementById("pCost").value||0);
-    const price = Number(document.getElementById("pPrice").value||0);
-
-    if (!sku || !name){
-      alert("SKU y Producto son obligatorios.");
-      return;
-    }
-
-    // SKU único
-    const exists = state.products.find(p=>p.sku===sku && p.id!==editingId);
-    if (exists){ alert("SKU ya existe. Usa otro."); return; }
-
-    if (editingId){
-      const p = getProductById(editingId);
-      Object.assign(p, {sku,name,category,unitBase,minStock,cost,price,active:true});
-    }else{
-      state.products.push({id:uid(), sku, name, category, unitBase, minStock, cost, price, active:true});
-    }
-    saveState(state);
-    refreshList();
-    alert("Guardado ✅");
-  };
-
-  document.getElementById("btnDeleteProd").onclick=()=>{
-    if (!editingId) return;
-    if (!confirm("¿Eliminar producto? (se mantiene historial en Kardex, pero el producto quedará inactivo)")) return;
-    const p = getProductById(editingId);
-    p.active = false;
-    saveState(state);
-    editingId=null;
-    document.getElementById("btnClearProd").click();
-    refreshList();
-  };
-
-  qProd.oninput=refreshList;
-  refreshList();
+  q.oninput=render;
+  render();
 }
 
-// ---------- Kardex ----------
-let lastPrefillType = null;
-function prefillMovementType(t){ lastPrefillType = t; }
-
+/** ==========================
+ *  Kardex (personal usa esto)
+ *  ========================== */
 function renderKardex(){
-  const products = state.products.filter(p=>p.active!==false).sort((a,b)=>a.name.localeCompare(b.name));
-  const stockMap = stockByProductId();
-
+  const insumos = state.insumos.filter(x=>x.active!==false).sort((a,b)=>a.name.localeCompare(b.name));
   viewEl.innerHTML = `
     <div class="row">
-      <div class="pill">🧱 Kardex (Movimientos)</div>
-      <div class="right row" style="gap:8px;justify-content:flex-end">
-        <input id="qK" placeholder="Buscar en kardex..." style="max-width:280px" />
-      </div>
+      <div class="pill">🧱 Kardex (Ingresos/Salidas)</div>
+      <div class="right muted">Rol: <b>${role().toUpperCase()}</b></div>
     </div>
 
     <div class="split" style="margin-top:10px">
       <div class="card">
-        <div class="pill">➕ Registrar movimiento</div>
+        <div class="pill">➕ Registrar</div>
         <div class="row">
           <div>
             <label>Fecha</label>
-            <input id="mvDate" type="date" value="${todayISO()}" />
+            <input id="kDate" type="date" value="${todayISO()}" />
           </div>
           <div>
             <label>Tipo</label>
-            <select id="mvType">
+            <select id="kType">
               <option value="${TYPES.INGRESO}">INGRESO (compra)</option>
               <option value="${TYPES.SALIDA}">SALIDA (uso)</option>
               <option value="${TYPES.MERMA}">MERMA</option>
@@ -551,563 +871,458 @@ function renderKardex(){
             </select>
           </div>
         </div>
-
-        <label>Producto</label>
-        <select id="mvProd">
+        <label>Insumo</label>
+        <select id="kIns">
           <option value="">— Selecciona —</option>
-          ${products.map(p=>`<option value="${p.id}">${productLabel(p)}</option>`).join("")}
+          ${insumos.map(i=>`<option value="${i.id}">${i.name} (${i.unitBase})</option>`).join("")}
         </select>
-
-        <div class="row">
-          <div>
-            <label>Cantidad (en unidad base)</label>
-            <input id="mvQty" type="number" step="0.001" placeholder="Ej: 2.5" />
-            <div class="small" id="mvUnitHint"></div>
-          </div>
-          <div>
-            <label>Costo unitario (opcional)</label>
-            <input id="mvCost" type="number" step="0.01" placeholder="Ej: 12.50" />
-          </div>
-        </div>
-
+        <label>Cantidad (en unidad base)</label>
+        <input id="kQty" type="number" step="0.001" placeholder="Ej: 2.5" />
         <label>Nota</label>
-        <textarea id="mvNote" placeholder="Proveedor, motivo, etc."></textarea>
-        <div class="row">
-          <button class="btn primary" id="btnAddMv">Registrar</button>
-          <button class="btn" id="btnQuickIngreso">Ingreso rápido</button>
-          <button class="btn" id="btnQuickSalida">Salida rápida</button>
-        </div>
-
+        <textarea id="kNote" placeholder="Proveedor/motivo..."></textarea>
+        <button class="btn primary" id="btnAddK">Registrar movimiento</button>
         <div class="small" style="margin-top:8px">
-          Regla: INGRESO suma, SALIDA/MERMA restan. AJUSTE permite + o - según la cantidad.
+          INGRESO suma. SALIDA/MERMA restan. AJUSTE respeta el signo.
         </div>
       </div>
 
       <div class="card">
-        <div class="pill">📜 Historial</div>
+        <div class="row">
+          <div class="pill">📜 Historial</div>
+          <div class="right"><input id="qK" placeholder="Buscar..." /></div>
+        </div>
         <div style="max-height:520px;overflow:auto;margin-top:10px" id="kList"></div>
       </div>
     </div>
   `;
 
-  const mvType = document.getElementById("mvType");
-  if (lastPrefillType && Object.values(TYPES).includes(lastPrefillType)) {
-    mvType.value = lastPrefillType;
-    lastPrefillType = null;
-  }
+  const btnAdd = document.getElementById("btnAddK");
+  btnAdd.onclick=()=>{
+    const dateISO = document.getElementById("kDate").value || todayISO();
+    const type = document.getElementById("kType").value;
+    const insumoId = document.getElementById("kIns").value;
+    const qty = parseNum(document.getElementById("kQty").value);
+    const note = document.getElementById("kNote").value.trim();
 
-  const mvProd = document.getElementById("mvProd");
-  const mvUnitHint = document.getElementById("mvUnitHint");
+    if (!insumoId) return alert("Selecciona insumo.");
+    if (!qty) return alert("Cantidad inválida.");
 
-  mvProd.onchange=()=>{
-    const p = getProductById(mvProd.value);
-    mvUnitHint.textContent = p ? `Unidad base: ${p.unitBase} | Stock actual: ${fmtQty(stockMap.get(p.id)||0, p.unitBase)}` : "";
+    let q = qty;
+    if (type===TYPES.SALIDA || type===TYPES.MERMA) q = -Math.abs(qty);
+    if (type===TYPES.INGRESO) q = Math.abs(qty);
+    // AJUSTE: q con signo
+
+    state.kardex.push({ id:uid(), dateISO, type, insumoId, qtyBase:q, note, ref:"MANUAL" });
+    saveState();
+    renderKList();
+    alert("Registrado ✅");
   };
 
-  function refreshKList(){
+  document.getElementById("qK").oninput=renderKList;
+  renderKList();
+
+  function renderKList(){
     const q = normalize(document.getElementById("qK").value);
-    const rows = [...state.movements].sort((a,b)=> (b.dateISO||"").localeCompare(a.dateISO||""));
+    const rows = [...state.kardex].sort((a,b)=> (b.dateISO||"").localeCompare(a.dateISO||""));
 
     const filtered = rows.filter(m=>{
-      const p = m.productId ? getProductById(m.productId) : null;
-      const txt = `${m.type} ${m.note||""} ${m.ref||""} ${(p?.name)||""} ${(p?.sku)||""}`;
+      const ins = m.insumoId ? getInsumoById(m.insumoId) : null;
+      const txt = `${m.type} ${m.note||""} ${m.ref||""} ${(ins?.name)||""}`;
       return !q || normalize(txt).includes(q);
-    });
+    }).slice(0,500);
 
-    const trs = filtered.slice(0,500).map(m=>{
-      const p = m.productId ? getProductById(m.productId) : null;
+    const trs = filtered.map(m=>{
+      const ins = m.insumoId ? getInsumoById(m.insumoId) : null;
       const qty = Number(m.qtyBase||0);
-      const isNeg = qty < 0;
+      const cls = qty < 0 ? "crit" : "ok";
       return `
         <tr>
           <td>${m.dateISO||""}</td>
           <td>${m.type}</td>
-          <td>${p ? productLabel(p) : "<span class='muted'>—</span>"}</td>
-          <td>${isNeg ? `<span class="crit">${fmtQty(qty, p?.unitBase||"")}</span>` : `<span class="ok">${fmtQty(qty, p?.unitBase||"")}</span>`}</td>
+          <td>${ins ? ins.name : "<span class='muted'>—</span>"}</td>
+          <td><span class="${cls}">${fmtQty(qty, ins?.unitBase||"")}</span></td>
           <td class="muted">${m.note||""}</td>
-        </tr>`;
+        </tr>
+      `;
     }).join("");
 
     document.getElementById("kList").innerHTML = `
       <table>
-        <thead><tr><th>Fecha</th><th>Tipo</th><th>Producto</th><th>Cantidad</th><th>Nota</th></tr></thead>
+        <thead><tr><th>Fecha</th><th>Tipo</th><th>Insumo</th><th>Cantidad</th><th>Nota</th></tr></thead>
         <tbody>${trs || `<tr><td colspan="5" class="muted">Sin movimientos.</td></tr>`}</tbody>
       </table>
     `;
   }
+}
 
-  document.getElementById("btnAddMv").onclick=()=>{
-    const dateISO = document.getElementById("mvDate").value || todayISO();
-    const type = mvType.value;
-    const productId = mvProd.value;
-    const qty = Number(document.getElementById("mvQty").value||0);
-    const note = document.getElementById("mvNote").value.trim();
-    const unitCost = Number(document.getElementById("mvCost").value||0);
-
-    if (!productId){ alert("Selecciona producto."); return; }
-    if (!qty){ alert("Cantidad inválida."); return; }
-
-    let qtyBase = qty;
-    if (type===TYPES.SALIDA || type===TYPES.MERMA){
-      qtyBase = -Math.abs(qty);
-    } else if (type===TYPES.INGRESO){
-      qtyBase = Math.abs(qty);
-    } // AJUSTE: se respeta signo que ponga el usuario
-
-    state.movements.push({id:uid(), dateISO, type, productId, qtyBase, note, ref:"", unitCost: unitCost||null});
-    saveState(state);
-    refreshKList();
-    alert("Movimiento registrado ✅");
-  };
-
-  document.getElementById("btnQuickIngreso").onclick=()=>mvType.value=TYPES.INGRESO;
-  document.getElementById("btnQuickSalida").onclick=()=>mvType.value=TYPES.SALIDA;
-
-  document.getElementById("qK").oninput=refreshKList;
-  refreshKList();
-};
-
-// ---------- Recetas ----------
-function renderRecetas(){
-  const products = state.products.filter(p=>p.active!==false).sort((a,b)=>a.name.localeCompare(b.name));
+/** ==========================
+ *  Recetas & Packs
+ *  ========================== */
+function renderRecetasPacks(){
+  const recipes = [...state.recipes].sort((a,b)=>a.saleName.localeCompare(b.saleName));
+  const packs = [...state.packs].sort((a,b)=>a.packName.localeCompare(b.packName));
 
   viewEl.innerHTML = `
     <div class="row">
       <div class="pill">🍽️ Recetas</div>
-      <div class="right muted">Las recetas permiten descontar insumos automáticamente.</div>
+      <div class="right muted">Importadas desde Excel (hoja receta / pack)</div>
     </div>
 
-    <div class="split" style="margin-top:10px">
-      <div class="card">
-        <div class="pill">➕ Crear / Editar receta</div>
-        <label>Producto final (nombre)</label>
-        <input id="rfName" placeholder="Ej: Empanada de jamón y queso" />
-        <div class="row">
-          <div>
-            <label>Insumo</label>
-            <select id="rfProd">
-              <option value="">— Selecciona insumo —</option>
-              ${products.map(p=>`<option value="${p.id}">${productLabel(p)} (${p.unitBase})</option>`).join("")}
-            </select>
-          </div>
-          <div>
-            <label>Cantidad por 1 unidad final (en unidad base del insumo)</label>
-            <input id="rfQty" type="number" step="0.001" placeholder="Ej: 0.03" />
-          </div>
-        </div>
-        <div class="row">
-          <button class="btn" id="btnAddLine">Agregar insumo</button>
-          <button class="btn primary" id="btnSaveRecipe">Guardar receta</button>
-          <button class="btn danger" id="btnDelRecipe" disabled>Eliminar receta</button>
-        </div>
-        <div class="small" style="margin-top:8px">
-          Ejemplo: Si Queso crema (KG) usa 0.03 por empanada, al vender 10 se descuenta 0.30 KG.
-        </div>
-        <div style="margin-top:10px" id="rfLines"></div>
-      </div>
+    <div style="height:10px"></div>
 
-      <div class="card">
-        <div class="pill">📋 Recetas guardadas</div>
-        <div style="max-height:520px;overflow:auto;margin-top:10px" id="rList"></div>
+    <div class="card">
+      <div class="pill">Recetas por producto</div>
+      <div style="max-height:340px;overflow:auto;margin-top:10px">
+        ${renderRecipesTable(recipes)}
+      </div>
+    </div>
+
+    <div style="height:10px"></div>
+
+    <div class="card">
+      <div class="pill">Packs</div>
+      <div style="max-height:340px;overflow:auto;margin-top:10px">
+        ${renderPacksTable(packs)}
       </div>
     </div>
   `;
 
-  let editingRecipeId = null;
-  let draftLines = [];
-
-  const rfLines = document.getElementById("rfLines");
-
-  function renderLines(){
-    if (draftLines.length===0){
-      rfLines.innerHTML = `<div class="muted">Aún no agregas insumos.</div>`;
-      return;
-    }
-    rfLines.innerHTML = `
-      <table>
-        <thead><tr><th>Insumo</th><th>Cant. por unidad</th><th></th></tr></thead>
-        <tbody>
-          ${draftLines.map((l,idx)=>{
-            const p = getProductById(l.productId);
-            return `
-              <tr>
-                <td>${p ? productLabel(p) : "—"}</td>
-                <td>${fmtQty(l.qtyPerUnit, p?.unitBase||"")}</td>
-                <td><button class="btn danger" data-del="${idx}">Quitar</button></td>
-              </tr>`;
-          }).join("")}
-        </tbody>
-      </table>
-    `;
+  function renderRecipesTable(list){
+    if (!list.length) return `<div class="muted">Sin recetas.</div>`;
+    // tabla “bonita”: producto + insumos
+    const rows = list.map(r=>{
+      const insText = r.lines.map(l=>{
+        const ins = getInsumoById(l.insumoId);
+        return `${ins?.name||"—"} (${fmtQty(l.qtyPerUnitBase, ins?.unitBase||"")})`;
+      }).join("<br/>");
+      return `<tr><td><b>${r.saleName}</b></td><td class="muted">${insText}</td></tr>`;
+    }).join("");
+    return `<table><thead><tr><th>Producto</th><th>Insumos (por unidad)</th></tr></thead><tbody>${rows}</tbody></table>`;
   }
 
-  rfLines.addEventListener("click",(e)=>{
-    const b = e.target.closest("button[data-del]");
-    if (!b) return;
-    draftLines.splice(Number(b.dataset.del),1);
-    renderLines();
-  });
+  function renderPacksTable(list){
+    if (!list.length) return `<div class="muted">Sin packs.</div>`;
+    const rows = list.map(p=>{
+      const lines = p.lines.map(l=> `${l.saleName} x ${l.qty}`).join("<br/>");
+      return `<tr><td><b>${p.packName}</b></td><td class="muted">${lines}</td></tr>`;
+    }).join("");
+    return `<table><thead><tr><th>Pack</th><th>Contenido</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }
+}
 
-  document.getElementById("btnAddLine").onclick=()=>{
-    const productId = document.getElementById("rfProd").value;
-    const qtyPerUnit = Number(document.getElementById("rfQty").value||0);
-    if (!productId){ alert("Selecciona insumo."); return; }
-    if (!qtyPerUnit){ alert("Cantidad inválida."); return; }
-    draftLines.push({productId, qtyPerUnit});
-    document.getElementById("rfQty").value="";
-    renderLines();
-  };
+/** ==========================
+ *  Producción / Pedidos (Venta)
+ *  ========================== */
+function renderProduccion(){
+  // Selector de productos de venta + packs
+  const saleNames = state.saleProducts.filter(x=>x.active!==false).map(x=>x.name).sort((a,b)=>a.localeCompare(b));
+  const packNames = state.packs.map(p=>p.packName).sort((a,b)=>a.localeCompare(b));
+  const options = [
+    ...packNames.map(n=>({type:"PACK", name:n})),
+    ...saleNames.map(n=>({type:"PROD", name:n}))
+  ];
 
-  function refreshRecipeList(){
-    const items = [...state.recipes].sort((a,b)=> a.productFinalName.localeCompare(b.productFinalName));
-    const el = document.getElementById("rList");
-    if (items.length===0){
-      el.innerHTML = `<div class="muted">Sin recetas aún.</div>`;
-      return;
-    }
-    el.innerHTML = `
-      <table>
-        <thead><tr><th>Producto final</th><th>Insumos</th></tr></thead>
-        <tbody>
-          ${items.map(r=>`
-            <tr data-id="${r.id}" style="cursor:pointer">
-              <td>${r.productFinalName}</td>
-              <td class="muted">${r.lines.length}</td>
-            </tr>`).join("")}
-        </tbody>
-      </table>
-    `;
+  viewEl.innerHTML = `
+    <div class="row">
+      <div class="pill">👩‍🍳 Producción / Pedidos (Venta)</div>
+      <div class="right muted">Lo que registres aquí descuenta insumos (según receta/pack).</div>
+    </div>
+
+    <div class="split" style="margin-top:10px">
+      <div class="card">
+        <div class="pill">➕ Registrar pedido</div>
+        <div class="row">
+          <div>
+            <label>Fecha</label>
+            <input id="pDate" type="date" value="${todayISO()}" />
+          </div>
+          <div>
+            <label>Producto / Pack</label>
+            <select id="pItem">
+              <option value="">— Selecciona —</option>
+              ${options.map(o=>`<option value="${o.type}::${o.name}">${o.type==="PACK" ? "📦 " : "🍽️ "}${o.name}</option>`).join("")}
+            </select>
+          </div>
+          <div>
+            <label>Cantidad</label>
+            <input id="pQty" type="number" step="1" placeholder="Ej: 10" />
+          </div>
+        </div>
+        <label>Nota</label>
+        <textarea id="pNote" placeholder="Cliente / pedido / evento..."></textarea>
+        <button class="btn primary" id="btnAddProd">Registrar (descontar stock)</button>
+        <div class="small" id="pPreview" style="margin-top:10px"></div>
+      </div>
+
+      <div class="card">
+        <div class="row">
+          <div class="pill">📜 Pedidos recientes</div>
+          <div class="right"><input id="qP" placeholder="Buscar..." /></div>
+        </div>
+        <div style="max-height:520px;overflow:auto;margin-top:10px" id="pList"></div>
+      </div>
+    </div>
+  `;
+
+  const pItem = document.getElementById("pItem");
+  const pQty = document.getElementById("pQty");
+  const pPreview = document.getElementById("pPreview");
+  const qP = document.getElementById("qP");
+
+  function preview(){
+    const sel = pItem.value;
+    const qty = parseNum(pQty.value);
+    if (!sel || !qty){ pPreview.innerHTML = `<span class="muted">Selecciona producto/pack y cantidad para ver consumo.</span>`; return; }
+    const name = sel.split("::").slice(1).join("::");
+    const r = computeConsumptionPreview(name, qty);
+    pPreview.innerHTML = r;
   }
 
-  document.getElementById("rList").addEventListener("click",(e)=>{
-    const tr = e.target.closest("tr[data-id]");
-    if (!tr) return;
-    const r = state.recipes.find(x=>x.id===tr.dataset.id);
-    if (!r) return;
+  function computeConsumptionPreview(itemName, qty){
+    // genera lista de insumos consumidos
+    const temp = new Map(); // insId -> qty
+    const addRecipe = (saleName, qSale)=>{
+      const recipe = getRecipeBySaleName(saleName);
+      if (!recipe) return;
+      for (const l of recipe.lines){
+        const amount = Number(l.qtyPerUnitBase||0)*Number(qSale||0);
+        temp.set(l.insumoId, (temp.get(l.insumoId)||0) + amount);
+      }
+    };
 
-    editingRecipeId = r.id;
-    document.getElementById("rfName").value = r.productFinalName;
-    draftLines = r.lines.map(x=>({...x}));
-    document.getElementById("btnDelRecipe").disabled = false;
-    renderLines();
-  });
-
-  document.getElementById("btnSaveRecipe").onclick=()=>{
-    const productFinalName = document.getElementById("rfName").value.trim();
-    if (!productFinalName){ alert("Nombre de producto final requerido."); return; }
-    if (draftLines.length===0){ alert("Agrega al menos 1 insumo."); return; }
-
-    if (editingRecipeId){
-      const r = state.recipes.find(x=>x.id===editingRecipeId);
-      r.productFinalName = productFinalName;
-      r.lines = draftLines;
+    const pack = getPackByName(itemName);
+    if (pack){
+      for (const line of pack.lines){
+        addRecipe(line.saleName, Number(line.qty||0)*Number(qty||0));
+      }
     } else {
-      state.recipes.push({id:uid(), productFinalName, lines:draftLines});
+      addRecipe(itemName, qty);
     }
-    saveState(state);
-    refreshRecipeList();
-    alert("Receta guardada ✅");
-  };
 
-  document.getElementById("btnDelRecipe").onclick=()=>{
-    if (!editingRecipeId) return;
-    if (!confirm("¿Eliminar receta?")) return;
-    state.recipes = state.recipes.filter(r=>r.id!==editingRecipeId);
-    saveState(state);
-    editingRecipeId=null;
-    draftLines=[];
-    document.getElementById("rfName").value="";
-    document.getElementById("btnDelRecipe").disabled=true;
-    renderLines();
-    refreshRecipeList();
-  };
+    const st = stockMap();
+    const lines = [...temp.entries()].map(([insId, amount])=>{
+      const ins = getInsumoById(insId);
+      const have = st.get(insId)||0;
+      const lack = amount > have;
+      return `
+        <tr>
+          <td>${ins?.name||"—"}</td>
+          <td>${fmtQty(amount, ins?.unitBase||"")}</td>
+          <td>${fmtQty(have, ins?.unitBase||"")}</td>
+          <td>${lack ? `<span class="tag crit">Falta</span>` : `<span class="tag ok">OK</span>`}</td>
+        </tr>`;
+    }).join("");
 
-  renderLines();
-  refreshRecipeList();
-}
-
-// ---------- Producción y Ventas ----------
-function renderProduccionVentas(){
-  const recipeNames = state.recipes.map(r=>r.productFinalName).sort((a,b)=>a.localeCompare(b));
-  viewEl.innerHTML = `
-    <div class="row">
-      <div class="pill">👩‍🍳 Producción / 💳 Ventas</div>
-      <div class="right muted">Se descuenta insumo según receta.</div>
-    </div>
-
-    <div class="split" style="margin-top:10px">
-      <div class="card">
-        <div class="pill">Producción</div>
-        <div class="row">
-          <div>
-            <label>Fecha</label>
-            <input id="prDate" type="date" value="${todayISO()}" />
-          </div>
-          <div>
-            <label>Producto final</label>
-            <select id="prName">
-              <option value="">— Selecciona receta —</option>
-              ${recipeNames.map(n=>`<option value="${n}">${n}</option>`).join("")}
-            </select>
-          </div>
-          <div>
-            <label>Cantidad producida</label>
-            <input id="prQty" type="number" step="1" placeholder="Ej: 10" />
-          </div>
-        </div>
-        <label>Nota</label>
-        <textarea id="prNote" placeholder="Turno, responsable, etc."></textarea>
-        <button class="btn primary" id="btnDoProd">Registrar producción (descontar)</button>
-        <div class="small" style="margin-top:8px" id="prPreview"></div>
+    if (!lines) return `<span class="muted">No hay receta asociada (no se puede calcular consumo).</span>`;
+    return `
+      <div class="muted">Consumo estimado de insumos:</div>
+      <div style="max-height:220px;overflow:auto;margin-top:8px">
+        <table><thead><tr><th>Insumo</th><th>Consumo</th><th>Stock</th><th>Estado</th></tr></thead>
+        <tbody>${lines}</tbody></table>
       </div>
-
-      <div class="card">
-        <div class="pill">Ventas</div>
-        <div class="row">
-          <div>
-            <label>Fecha</label>
-            <input id="svDate" type="date" value="${todayISO()}" />
-          </div>
-          <div>
-            <label>Producto vendido</label>
-            <select id="svName">
-              <option value="">— Selecciona receta —</option>
-              ${recipeNames.map(n=>`<option value="${n}">${n}</option>`).join("")}
-            </select>
-          </div>
-          <div>
-            <label>Cantidad vendida</label>
-            <input id="svQty" type="number" step="1" placeholder="Ej: 5" />
-          </div>
-        </div>
-        <div class="row">
-          <div>
-            <label>Canal</label>
-            <select id="svChannel">
-              <option value="MOSTRADOR">MOSTRADOR</option>
-              <option value="DELIVERY">DELIVERY</option>
-              <option value="EVENTO">EVENTO</option>
-              <option value="OTRO">OTRO</option>
-            </select>
-          </div>
-        </div>
-        <label>Nota</label>
-        <textarea id="svNote" placeholder="Boleta, cliente, etc."></textarea>
-        <button class="btn primary" id="btnDoSale">Registrar venta (descontar)</button>
-        <div class="small" style="margin-top:8px" id="svPreview"></div>
-      </div>
-    </div>
-
-    <div style="height:10px"></div>
-    <div class="card">
-      <div class="pill">📜 Últimos registros</div>
-      <div style="max-height:420px;overflow:auto;margin-top:10px" id="pvLog"></div>
-    </div>
-  `;
-
-  function getRecipeByName(name){
-    return state.recipes.find(r=>r.productFinalName===name);
-  }
-  function recipePreview(name, qty){
-    const r = getRecipeByName(name);
-    if (!r) return "";
-    const n = Number(qty||0);
-    if (!n) return "Selecciona receta y cantidad para ver el consumo.";
-    const lines = r.lines.map(l=>{
-      const p = getProductById(l.productId);
-      const need = Number(l.qtyPerUnit||0)*n;
-      return `• ${p ? p.name : "Insumo"}: ${fmtQty(need, p?.unitBase||"")}`;
-    }).join("<br/>");
-    return `<div class="muted">Consumo estimado:</div><div style="margin-top:6px">${lines}</div>`;
+    `;
   }
 
-  const prName = document.getElementById("prName");
-  const prQty = document.getElementById("prQty");
-  const prPreview = document.getElementById("prPreview");
-  const svName = document.getElementById("svName");
-  const svQty = document.getElementById("svQty");
-  const svPreview = document.getElementById("svPreview");
+  pItem.onchange=preview;
+  pQty.oninput=preview;
+  preview();
 
-  function updatePreviews(){
-    prPreview.innerHTML = recipePreview(prName.value, prQty.value);
-    svPreview.innerHTML = recipePreview(svName.value, svQty.value);
-  }
-  prName.onchange=updatePreviews; prQty.oninput=updatePreviews;
-  svName.onchange=updatePreviews; svQty.oninput=updatePreviews;
-  updatePreviews();
-
-  function applyRecipeMovement(type, dateISO, finalName, qty, note, extra){
-    const r = getRecipeByName(finalName);
-    if (!r) throw new Error("No existe receta.");
-    const n = Number(qty||0);
-    if (!n) throw new Error("Cantidad inválida.");
-
-    // registra evento (log)
-    if (type===TYPES.VENTA) state.sales.push({id:uid(), dateISO, productFinalName:finalName, qty:n, channel:extra?.channel||"", note});
-    if (type===TYPES.PRODUCCION) state.productions.push({id:uid(), dateISO, productFinalName:finalName, qty:n, note});
-
-    // descuenta insumos
-    for (const l of r.lines){
-      const p = getProductById(l.productId);
-      const consume = Number(l.qtyPerUnit||0)*n;
-      if (!consume) continue;
-      state.movements.push({
-        id: uid(),
-        dateISO,
-        type,
-        productId: l.productId,
-        qtyBase: -Math.abs(consume),
-        note: `${type}: ${finalName} x ${n}. ${note||""}`.trim(),
-        ref: extra?.channel ? `Canal:${extra.channel}` : "",
-        unitCost: p?.cost ?? null
-      });
+  document.getElementById("btnAddProd").onclick=()=>{
+    if (!isAdmin() && !isStaff()){
+      alert("Necesitas entrar como ADMIN o PERSONAL.");
+      return;
     }
-  }
+    const dateISO = document.getElementById("pDate").value || todayISO();
+    const sel = pItem.value;
+    const qty = parseNum(pQty.value);
+    const note = document.getElementById("pNote").value.trim();
+    if (!sel) return alert("Selecciona producto/pack.");
+    if (!qty) return alert("Cantidad inválida.");
 
-  document.getElementById("btnDoProd").onclick=()=>{
+    const name = sel.split("::").slice(1).join("::");
     try{
-      const dateISO = document.getElementById("prDate").value || todayISO();
-      const finalName = document.getElementById("prName").value;
-      const qty = document.getElementById("prQty").value;
-      const note = document.getElementById("prNote").value.trim();
-      if (!finalName) return alert("Selecciona receta (producto final).");
-      applyRecipeMovement(TYPES.PRODUCCION, dateISO, finalName, qty, note, {});
-      saveState(state);
-      alert("Producción registrada ✅ (insumos descontados)");
-      renderProduccionVentas();
-    }catch(e){ alert(e.message); }
+      applyProductionAsSale(dateISO, name, qty, note, "manual");
+      alert("Pedido registrado ✅ (insumos descontados si hay receta)");
+      renderProduccion();
+    }catch(e){
+      alert(e.message);
+    }
   };
 
-  document.getElementById("btnDoSale").onclick=()=>{
-    try{
-      const dateISO = document.getElementById("svDate").value || todayISO();
-      const finalName = document.getElementById("svName").value;
-      const qty = document.getElementById("svQty").value;
-      const note = document.getElementById("svNote").value.trim();
-      const channel = document.getElementById("svChannel").value;
-      if (!finalName) return alert("Selecciona receta (producto vendido).");
-      applyRecipeMovement(TYPES.VENTA, dateISO, finalName, qty, note, {channel});
-      saveState(state);
-      alert("Venta registrada ✅ (insumos descontados)");
-      renderProduccionVentas();
-    }catch(e){ alert(e.message); }
-  };
+  qP.oninput=renderPList;
+  renderPList();
 
-  // Log
-  function renderLog(){
-    const logs = [
-      ...state.productions.map(x=>({t:"PRODUCCION",...x})),
-      ...state.sales.map(x=>({t:"VENTA",...x}))
-    ].sort((a,b)=> (b.dateISO||"").localeCompare(a.dateISO||"")).slice(0,60);
+  function renderPList(){
+    const qq = normalize(qP.value);
+    const orders = [...state.productionOrders].sort((a,b)=> (b.dateISO||"").localeCompare(a.dateISO||"")).filter(o=>{
+      const txt = `${o.itemName} ${o.note||""} ${o.source||""}`;
+      return !qq || normalize(txt).includes(qq);
+    }).slice(0,200);
 
-    document.getElementById("pvLog").innerHTML = `
+    const rows = orders.map(o=>{
+      // precio venta estimado
+      let sale = 0;
+      const pack = getPackByName(o.itemName);
+      if (pack){
+        let packPrice = 0;
+        for (const l of pack.lines){
+          packPrice += Number(getSaleByName(l.saleName)?.price||0) * Number(l.qty||0);
+        }
+        sale = packPrice * Number(o.qty||0);
+      } else {
+        sale = Number(getSaleByName(o.itemName)?.price||0) * Number(o.qty||0);
+      }
+      return `
+        <tr>
+          <td>${o.dateISO}</td>
+          <td>${o.itemName}</td>
+          <td>${o.qty}</td>
+          <td>${fmtMoney(sale)}</td>
+          <td class="muted">${o.source}</td>
+        </tr>`;
+    }).join("");
+
+    document.getElementById("pList").innerHTML = `
       <table>
-        <thead><tr><th>Fecha</th><th>Tipo</th><th>Producto</th><th>Cant.</th><th>Detalle</th></tr></thead>
-        <tbody>
-          ${logs.map(x=>`
-            <tr>
-              <td>${x.dateISO||""}</td>
-              <td>${x.t}</td>
-              <td>${x.productFinalName}</td>
-              <td>${x.qty}</td>
-              <td class="muted">${x.channel ? ("Canal: "+x.channel+" | ") : ""}${x.note||""}</td>
-            </tr>`).join("") || `<tr><td colspan="5" class="muted">Sin registros aún.</td></tr>`}
-        </tbody>
+        <thead><tr><th>Fecha</th><th>Producto/Pack</th><th>Cant</th><th>Venta</th><th>Origen</th></tr></thead>
+        <tbody>${rows || `<tr><td colspan="5" class="muted">Sin pedidos aún.</td></tr>`}</tbody>
       </table>
     `;
   }
-  renderLog();
 }
 
-// ---------- Reportes ----------
+/** ==========================
+ *  Reportes por fecha
+ *  ========================== */
 function renderReportes(){
-  const byCat = groupByCategory();
-  const cats = Object.keys(byCat).sort((a,b)=>a.localeCompare(b));
-
-  const rows = cats.map(c=>{
-    const x = byCat[c];
-    return `
-      <tr>
-        <td>${c}</td>
-        <td>${x.items}</td>
-        <td>${x.stock.toFixed(3).replace(/\.?0+$/,"")}</td>
-        <td>${fmtMoney(x.cost)}</td>
-        <td>${fmtMoney(x.sale)}</td>
-      </tr>
-    `;
-  }).join("");
-
   viewEl.innerHTML = `
     <div class="row">
-      <div class="pill">🧩 Reportes por categoría</div>
-      <div class="right muted">Valorización a costo y a precio de venta.</div>
+      <div class="pill">🧩 Reportes</div>
+      <div class="right muted">Filtra por día o rango. Producción = Venta.</div>
     </div>
 
-    <div style="height:10px"></div>
-
-    <div class="card">
-      <div class="pill">Resumen</div>
-      <div style="max-height:520px;overflow:auto;margin-top:10px">
-        <table>
-          <thead><tr>
-            <th>Categoría</th><th># Productos</th><th>Stock (suma)</th><th>Valor costo</th><th>Valor venta</th>
-          </tr></thead>
-          <tbody>
-            ${rows || `<tr><td colspan="5" class="muted">Sin datos.</td></tr>`}
-          </tbody>
-        </table>
+    <div class="card" style="margin-top:10px">
+      <div class="row">
+        <div>
+          <label>Desde</label>
+          <input id="rFrom" type="date" value="${todayISO()}" />
+        </div>
+        <div>
+          <label>Hasta</label>
+          <input id="rTo" type="date" value="${todayISO()}" />
+        </div>
+        <div style="align-self:flex-end">
+          <button class="btn primary" id="btnRun">Ver reporte</button>
+        </div>
+      </div>
+      <div class="small" style="margin-top:8px">
+        Incluye: productos elaborados, venta total, costo total (insumos), margen, insumos usados y stock resultante.
       </div>
     </div>
 
     <div style="height:10px"></div>
+    <div id="reportOut"></div>
+  `;
 
-    <div class="card">
-      <div class="pill">Detalle (productos)</div>
-      <div style="max-height:520px;overflow:auto;margin-top:10px">
-        ${renderProductsDetailTable()}
+  document.getElementById("btnRun").onclick=()=>{
+    const from = document.getElementById("rFrom").value;
+    const to = document.getElementById("rTo").value;
+    const rep = computeReport(from, to);
+
+    const byCat = inventoryValueByCategory();
+    const cats = Object.keys(byCat).sort((a,b)=>a.localeCompare(b));
+    const catRows = cats.map(c=>`
+      <tr><td>${c}</td><td>${byCat[c].items}</td><td>${fmtMoney(byCat[c].costValue)}</td></tr>
+    `).join("");
+
+    document.getElementById("reportOut").innerHTML = `
+      <div class="kpi">
+        <div class="card"><div class="k">Venta total</div><div class="v">${fmtMoney(rep.salesTotal)}</div></div>
+        <div class="card"><div class="k">Costo insumos usados</div><div class="v">${fmtMoney(rep.costUsed)}</div></div>
+        <div class="card"><div class="k">Margen estimado</div><div class="v">${fmtMoney(rep.margin)}</div></div>
+        <div class="card"><div class="k">Pedidos</div><div class="v">${rep.orders.length}</div></div>
       </div>
-    </div>
-  `;
+
+      <div style="height:10px"></div>
+
+      <div class="card">
+        <div class="pill">📦 Productos elaborados / vendidos</div>
+        <div style="max-height:320px;overflow:auto;margin-top:10px">${renderOrdersTable(rep.orders)}</div>
+      </div>
+
+      <div style="height:10px"></div>
+
+      <div class="card">
+        <div class="pill">🧪 Insumos usados (rango)</div>
+        <div style="max-height:320px;overflow:auto;margin-top:10px">${renderInsumosUsed(rep.insumoUsed)}</div>
+      </div>
+
+      <div style="height:10px"></div>
+
+      <div class="card">
+        <div class="pill">🚨 Faltantes vs stock</div>
+        <div style="max-height:260px;overflow:auto;margin-top:10px">${renderFaltantes(rep.faltantes)}</div>
+      </div>
+
+      <div style="height:10px"></div>
+
+      <div class="card">
+        <div class="pill">📂 Valor inventario por categoría (a costo)</div>
+        <div style="max-height:260px;overflow:auto;margin-top:10px">
+          <table>
+            <thead><tr><th>Categoría</th><th># Insumos</th><th>Valor (costo)</th></tr></thead>
+            <tbody>${catRows || `<tr><td colspan="3" class="muted">Sin datos</td></tr>`}</tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  };
+
+  function renderOrdersTable(orders){
+    if (!orders.length) return `<div class="muted">Sin pedidos en el rango.</div>`;
+    const rows = orders.map(o=>{
+      let price = 0;
+      const pack = getPackByName(o.itemName);
+      if (pack){
+        let packPrice=0;
+        for (const l of pack.lines){
+          packPrice += Number(getSaleByName(l.saleName)?.price||0) * Number(l.qty||0);
+        }
+        price = packPrice;
+      } else {
+        price = Number(getSaleByName(o.itemName)?.price||0);
+      }
+      return `<tr><td>${o.dateISO}</td><td>${o.itemName}</td><td>${o.qty}</td><td>${fmtMoney(price)}</td><td>${fmtMoney(price*o.qty)}</td></tr>`;
+    }).join("");
+    return `<table><thead><tr><th>Fecha</th><th>Producto/Pack</th><th>Cant</th><th>Precio</th><th>Total</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }
+
+  function renderInsumosUsed(map){
+    const entries = [...map.entries()].map(([insId, qty])=>{
+      const ins = getInsumoById(insId);
+      const cost = qty * Number(ins?.cost||0);
+      return {ins, qty, cost};
+    }).sort((a,b)=>b.cost-a.cost);
+
+    if (!entries.length) return `<div class="muted">No hay consumo de insumos (o no hay recetas registradas).</div>`;
+
+    const rows = entries.map(x=>`
+      <tr>
+        <td>${x.ins?.name||"—"}</td>
+        <td>${fmtQty(x.qty, x.ins?.unitBase||"")}</td>
+        <td>${fmtMoney(x.ins?.cost||0)}</td>
+        <td>${fmtMoney(x.cost)}</td>
+      </tr>
+    `).join("");
+
+    return `<table><thead><tr><th>Insumo</th><th>Usado</th><th>Costo unit</th><th>Costo total</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }
 }
 
-function renderProductsDetailTable(){
-  const stockMap = stockByProductId();
-  const items = state.products
-    .filter(p=>p.active!==false)
-    .map(p=>{
-      const st = stockMap.get(p.id)||0;
-      const s = stockStatus(p, st);
-      return {p, st, s};
-    })
-    .sort((a,b)=> (a.p.category||"").localeCompare(b.p.category||"") || a.p.name.localeCompare(b.p.name));
-
-  if (items.length===0) return `<div class="muted">Sin productos.</div>`;
-
-  return `
-    <table>
-      <thead><tr>
-        <th>Categoría</th><th>SKU</th><th>Producto</th><th>Unidad</th>
-        <th>Stock</th><th>Mínimo</th><th>Costo</th><th>Precio</th><th>Estado</th>
-      </tr></thead>
-      <tbody>
-        ${items.map(({p,st,s})=>`
-          <tr>
-            <td>${p.category||"Sin categoría"}</td>
-            <td>${p.sku||""}</td>
-            <td>${p.name}</td>
-            <td>${p.unitBase||""}</td>
-            <td>${fmtQty(st,p.unitBase)}</td>
-            <td>${fmtQty(Number(p.minStock||0), p.unitBase)}</td>
-            <td>${fmtMoney(p.cost)}</td>
-            <td>${fmtMoney(p.price)}</td>
-            <td><span class="tag ${s.cls}">${s.label}</span></td>
-          </tr>`).join("")}
-      </tbody>
-    </table>
-  `;
-}
-
-// Inicial
+/** ==========================
+ *  Inicio
+ *  ========================== */
+applyRoleToMenu();
 setView("dashboard");
 </script>
 </body>
