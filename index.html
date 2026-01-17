@@ -2,33 +2,39 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>ERP Inventario - BRAVIZIMO'S</title>
+<title>ERP Inventario – BRAVIZIMO’S</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <style>
-body{margin:0;font-family:Segoe UI;background:#0b1220;color:#e8f0ff}
-header{display:flex;align-items:center;gap:12px;padding:14px 20px;background:#0e1628;border-bottom:1px solid #1f2a44}
+:root{
+ --bg:#0b1220;--card:#131c33;--line:#1f2a44;--text:#e8f0ff;
+ --accent:#5eead4;--warn:#fbbf24;--crit:#fb7185;
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:Segoe UI;background:var(--bg);color:var(--text)}
+header{display:flex;align-items:center;gap:12px;padding:14px 20px;background:#0e1628;border-bottom:1px solid var(--line)}
 header img{height:36px}
 header h1{font-size:18px;margin:0}
 .wrap{display:flex;height:calc(100vh - 64px)}
-nav{width:260px;background:#0e1628;border-right:1px solid #1f2a44;padding:12px}
-nav button{width:100%;margin:6px 0;padding:10px;border-radius:8px;border:1px solid #1f2a44;background:#131c33;color:#e8f0ff;cursor:pointer}
-nav button.active{border-color:#5eead4}
+nav{width:260px;background:#0e1628;border-right:1px solid var(--line);padding:12px}
+nav button{width:100%;margin:6px 0;padding:10px;border-radius:8px;border:1px solid var(--line);background:#131c33;color:var(--text);cursor:pointer}
+nav button.active{border-color:var(--accent)}
 main{flex:1;padding:16px;overflow:auto}
-.card{background:#131c33;border:1px solid #1f2a44;border-radius:12px;padding:14px;margin-bottom:14px}
-.hidden{display:none}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
 table{width:100%;border-collapse:collapse}
-th,td{padding:8px;border-bottom:1px solid #1f2a44;font-size:13px}
+th,td{padding:8px;border-bottom:1px solid var(--line);font-size:13px}
 th{text-align:left;color:#94a3b8}
-input,select{background:#0b1220;color:#e8f0ff;border:1px solid #1f2a44;border-radius:6px;padding:6px}
+input,select,button{background:#0b1220;color:var(--text);border:1px solid var(--line);border-radius:6px;padding:6px}
+button.primary{background:#0f766e;border-color:#0f766e}
+.badge.ok{color:#22c55e} .badge.warn{color:#fbbf24} .badge.crit{color:#fb7185}
 </style>
 </head>
 
 <body>
-
 <header>
-  <img src="logo.png" alt="Bravizimo's">
-  <h1>ERP Inventario – BRAVIZIMO'S</h1>
+  <img src="logo.png">
+  <h1>ERP Inventario – BRAVIZIMO’S</h1>
 </header>
 
 <div class="wrap">
@@ -37,104 +43,127 @@ input,select{background:#0b1220;color:#e8f0ff;border:1px solid #1f2a44;border-ra
 </div>
 
 <script>
-// ================== BASE DE DATOS ==================
+// ======================= DB =======================
 const DB = {
  insumos: JSON.parse(localStorage.getItem("insumos")||"[]"),
  productos: JSON.parse(localStorage.getItem("productos")||"[]"),
  recetas: JSON.parse(localStorage.getItem("recetas")||"[]"),
+ packs: JSON.parse(localStorage.getItem("packs")||"[]"),
  produccion: JSON.parse(localStorage.getItem("produccion")||"[]"),
  kardex: JSON.parse(localStorage.getItem("kardex")||"[]"),
  rol: localStorage.getItem("rol") || "ADMIN"
 };
+function save(){Object.keys(DB).forEach(k=>{if(k!=="rol")localStorage.setItem(k,JSON.stringify(DB[k]))})}
 
-function save(){ Object.keys(DB).forEach(k=>{
- if(k!=="rol") localStorage.setItem(k,JSON.stringify(DB[k]));
-});}
-
-// ================== MENU ==================
-const menu = document.getElementById("menu");
-function renderMenu(){
- menu.innerHTML = `
+// ======================= MENU =======================
+function menu(){
+ const m=document.getElementById("menu");
+ m.innerHTML=`
   <button onclick="dashboard()">📊 Dashboard</button>
   <button onclick="insumos()">📦 Insumos</button>
   ${DB.rol==="ADMIN"?`
   <button onclick="productos()">💲 Productos</button>
   <button onclick="recetas()">📖 Recetas & Packs</button>
-  <button onclick="produccion()">👩‍🍳 Producción / Pedidos</button>
-  <button onclick="reportes()">📆 Reportes</button>`:""}
+  <button onclick="produccion()">👩‍🍳 Producción / Ventas</button>
+  <button onclick="reportes()">📆 Reportes</button>
+  <button onclick="importBase()">⬆ Importar Base Excel</button>
+  <button onclick="importProduccion()">⬆ Importar Producción</button>
+  `:""}
   <button onclick="kardex()">📒 Kardex</button>
  `;
 }
-renderMenu();
+menu();
 
-// ================== DASHBOARD ==================
+// ======================= DASHBOARD =======================
 function dashboard(){
  const total = DB.insumos.reduce((s,i)=>s+(i.stock*i.costo),0);
- document.getElementById("content").innerHTML = `
- <div class="card">
-  <h3>Inventario valorizado</h3>
-  <h2>S/ ${total.toFixed(2)}</h2>
+ document.getElementById("content").innerHTML=`
+ <div class="grid">
+  <div class="card"><h3>Inventario valorizado</h3><h2>S/ ${total.toFixed(2)}</h2></div>
+  <div class="card"><h3>Insumos</h3><h2>${DB.insumos.length}</h2></div>
+  <div class="card"><h3>Producción acumulada</h3><h2>${DB.produccion.length}</h2></div>
  </div>
- <canvas id="chart"></canvas>
- `;
- const ctx = document.getElementById("chart");
- new Chart(ctx,{
-  type:"bar",
-  data:{
-   labels:DB.insumos.map(i=>i.nombre),
-   datasets:[{label:"Valor",data:DB.insumos.map(i=>i.stock*i.costo),backgroundColor:"#5eead4"}]
-  }
+ <div class="card"><canvas id="chart"></canvas></div>`;
+ const ctx=document.getElementById("chart");
+ new Chart(ctx,{type:"bar",
+  data:{labels:DB.insumos.map(i=>i.nombre),
+  datasets:[{label:"Valor S/",data:DB.insumos.map(i=>i.stock*i.costo),backgroundColor:"#5eead4"}]}
  });
 }
 
-// ================== INSUMOS ==================
+// ======================= INSUMOS =======================
 function insumos(){
- let rows = DB.insumos.map(i=>`
- <tr><td>${i.categoria}</td><td>${i.nombre}</td><td>${i.stock}</td><td>S/ ${i.costo}</td></tr>
- `).join("");
- document.getElementById("content").innerHTML = `
+ let rows=DB.insumos.map(i=>{
+  let estado=i.stock<=0?"crit":i.stock<i.min?"warn":"ok";
+  return `<tr><td>${i.categoria}</td><td>${i.nombre}</td><td>${i.stock}</td><td>S/ ${i.costo}</td>
+  <td><span class="badge ${estado}">${estado.toUpperCase()}</span></td></tr>`
+ }).join("");
+ document.getElementById("content").innerHTML=`
  <div class="card"><h3>Insumos</h3>
- <table><tr><th>Cat</th><th>Insumo</th><th>Stock</th><th>Costo</th></tr>${rows}</table>
+ <table><tr><th>Cat</th><th>Insumo</th><th>Stock</th><th>Costo</th><th>Estado</th></tr>${rows}</table>
  </div>`;
 }
 
-// ================== PRODUCCIÓN ==================
+// ======================= PRODUCCIÓN =======================
 function produccion(){
- document.getElementById("content").innerHTML = `
+ document.getElementById("content").innerHTML=`
  <div class="card">
-  <h3>Registrar producción</h3>
-  <input id="prodNombre" placeholder="Producto">
-  <input id="prodCant" type="number" placeholder="Cantidad">
-  <button onclick="guardarProduccion()">Registrar</button>
+ <h3>Registrar Producción / Venta</h3>
+ <input id="pProd" placeholder="Producto / Pack">
+ <input id="pCant" type="number" placeholder="Cantidad">
+ <button class="primary" onclick="guardarProduccion()">Registrar</button>
  </div>`;
 }
 
 function guardarProduccion(){
- const nombre=document.getElementById("prodNombre").value;
- const cant=+document.getElementById("prodCant").value;
- const receta = DB.recetas.filter(r=>r.producto===nombre);
- receta.forEach(r=>{
+ const prod=document.getElementById("pProd").value;
+ const cant=+document.getElementById("pCant").value;
+ const fecha=new Date().toISOString().slice(0,10);
+
+ let insumosUsados=[];
+ DB.recetas.filter(r=>r.producto===prod).forEach(r=>{
   const ins=DB.insumos.find(i=>i.nombre===r.insumo);
-  ins.stock -= r.cantidad*cant;
+  if(ins){
+   const q=r.cantidad*cant;
+   ins.stock-=q;
+   insumosUsados.push({insumo:ins.nombre,cantidad:q,costo:q*ins.costo});
+   DB.kardex.push({fecha,tipo:"PRODUCCIÓN",insumo:ins.nombre,cantidad:-q});
+  }
  });
- DB.produccion.push({fecha:new Date().toISOString().slice(0,10),producto:nombre,cantidad:cant});
+
+ DB.produccion.push({fecha,producto:prod,cantidad:cant,detalle:insumosUsados});
  save(); alert("Producción registrada");
 }
 
-// ================== KARDEX ==================
+// ======================= KARDEX =======================
 function kardex(){
- let rows = DB.kardex.map(k=>`
+ let rows=DB.kardex.map(k=>`
  <tr><td>${k.fecha}</td><td>${k.tipo}</td><td>${k.insumo}</td><td>${k.cantidad}</td></tr>
  `).join("");
- document.getElementById("content").innerHTML = `
+ document.getElementById("content").innerHTML=`
  <div class="card"><h3>Kardex</h3>
  <table><tr><th>Fecha</th><th>Tipo</th><th>Insumo</th><th>Cant</th></tr>${rows}</table>
  </div>`;
 }
 
-// ================== INIT ==================
+// ======================= REPORTES =======================
+function reportes(){
+ let rows=DB.produccion.map(p=>`
+ <tr><td>${p.fecha}</td><td>${p.producto}</td><td>${p.cantidad}</td>
+ <td>S/ ${p.detalle.reduce((s,d)=>s+d.costo,0).toFixed(2)}</td></tr>
+ `).join("");
+ document.getElementById("content").innerHTML=`
+ <div class="card"><h3>Producción por fecha</h3>
+ <table><tr><th>Fecha</th><th>Producto</th><th>Cant</th><th>Costo</th></tr>${rows}</table>
+ </div>`;
+}
+
+// ======================= IMPORTS (placeholder UI) =======================
+function importBase(){alert("Importa insumos / precios / recetas / packs desde tu Excel base")}
+function importProduccion(){alert("Importa SOLO la hoja PRODUCCIÓN del Excel")}
+
+// ======================= INIT =======================
 dashboard();
 </script>
-
 </body>
 </html>
