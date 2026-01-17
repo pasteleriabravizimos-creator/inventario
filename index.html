@@ -1,270 +1,374 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-<meta charset="UTF-8">
-<title>ERP Inventario – BRAVIZIMO’S</title>
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta charset="UTF-8" />
+<title>ERP Inventario – BRAVIZIMO'S</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-<!-- Librerías -->
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<!-- LIBS -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
 <style>
 :root{
- --bg:#0b1220;--card:#131c33;--line:#1f2a44;--text:#e8f0ff;
- --accent:#5eead4;--warn:#fbbf24;--crit:#fb7185;
+  --bg:#0b1220;
+  --card:#111b2e;
+  --line:#223255;
+  --txt:#e8f0ff;
+  --muted:#9fb0d0;
+  --accent:#5eead4;
+  --ok:#22c55e;
+  --warn:#fbbf24;
+  --crit:#ef4444;
 }
 *{box-sizing:border-box}
-body{margin:0;font-family:Segoe UI;background:var(--bg);color:var(--text)}
-header{display:flex;align-items:center;gap:12px;padding:14px 20px;background:#0e1628;border-bottom:1px solid var(--line)}
-header img{height:36px}
-.wrap{display:flex;height:calc(100vh - 64px)}
-nav{width:260px;background:#0e1628;border-right:1px solid var(--line);padding:12px}
-nav button{width:100%;margin:6px 0;padding:10px;border-radius:8px;border:1px solid var(--line);background:#131c33;color:var(--text);cursor:pointer}
-nav button.active{border-color:var(--accent)}
-main{flex:1;padding:16px;overflow:auto}
-.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
-table{width:100%;border-collapse:collapse}
-th,td{padding:8px;border-bottom:1px solid var(--line);font-size:13px}
-th{text-align:left;color:#94a3b8}
-input,select,button{background:#0b1220;color:var(--text);border:1px solid var(--line);border-radius:6px;padding:6px}
-button.primary{background:#0f766e;border-color:#0f766e}
-.badge.ok{color:#22c55e}
-.badge.warn{color:#fbbf24}
-.badge.crit{color:#fb7185}
+body{
+  margin:0;
+  font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;
+  background:linear-gradient(180deg,#070b14,#0b1220);
+  color:var(--txt);
+}
+header{
+  display:flex;align-items:center;gap:14px;
+  padding:14px 18px;
+  background:rgba(11,18,32,.9);
+  border-bottom:1px solid var(--line);
+}
+header img{height:42px}
+header h1{font-size:18px;margin:0}
+.wrap{max-width:1400px;margin:auto;padding:16px}
+.grid{display:grid;grid-template-columns:240px 1fr;gap:14px}
+aside{
+  background:var(--card);
+  border:1px solid var(--line);
+  border-radius:14px;
+  padding:12px;
+}
+aside button{
+  width:100%;
+  margin:6px 0;
+  padding:10px;
+  border-radius:10px;
+  border:1px solid var(--line);
+  background:#0f1a2f;
+  color:var(--txt);
+  cursor:pointer;
+}
+aside button.active{outline:2px solid var(--accent)}
+main{
+  background:var(--card);
+  border:1px solid var(--line);
+  border-radius:14px;
+  padding:16px;
+}
+.card{
+  background:#0f1a2f;
+  border:1px solid var(--line);
+  border-radius:12px;
+  padding:12px;
+  margin-bottom:12px;
+}
+.row{display:flex;gap:12px;flex-wrap:wrap}
+.stat{
+  flex:1;
+  padding:14px;
+  background:#0c162a;
+  border-radius:12px;
+  border:1px solid var(--line);
+}
+.stat h3{margin:0;font-size:13px;color:var(--muted)}
+.stat b{font-size:22px}
+table{
+  width:100%;
+  border-collapse:collapse;
+  font-size:13px;
+}
+th,td{
+  padding:8px;
+  border-bottom:1px solid var(--line);
+}
+th{color:var(--muted);text-align:left}
+input,select{
+  background:#0b1529;
+  color:var(--txt);
+  border:1px solid var(--line);
+  border-radius:8px;
+  padding:8px;
+}
+button.action{
+  background:var(--accent);
+  color:#022c22;
+  border:none;
+  border-radius:10px;
+  padding:10px 14px;
+  cursor:pointer;
+}
+.hidden{display:none}
+.ok{color:var(--ok)}
+.warn{color:var(--warn)}
+.crit{color:var(--crit)}
 </style>
 </head>
 
 <body>
-
 <header>
-  <img src="logo.png" alt="Bravizimo's">
-  <h2>ERP Inventario – BRAVIZIMO’S</h2>
+  <img src="https://raw.githubusercontent.com/pasteleriabravizimos-creator/inventario/main/logo.png" />
+  <h1>ERP Web Inventario – BRAVIZIMO'S</h1>
 </header>
 
 <div class="wrap">
-  <nav id="menu"></nav>
-  <main id="content"></main>
+<div class="grid">
+
+<!-- MENU -->
+<aside>
+  <button class="active" onclick="show('dashboard')">📊 Dashboard</button>
+  <button onclick="show('insumos')">📦 Insumos</button>
+  <button onclick="show('productos')">💲 Productos</button>
+  <button onclick="show('recetas')">📖 Recetas & Packs</button>
+  <button onclick="show('produccion')">👩‍🍳 Producción / Ventas</button>
+  <button onclick="show('kardex')">📒 Kardex</button>
+  <button onclick="show('reportes')">📈 Reportes</button>
+  <hr>
+  <button onclick="importBase()">⬆ Importar Base Excel</button>
+  <button onclick="importProduccion()">⬆ Importar Producción</button>
+</aside>
+
+<!-- MAIN -->
+<main>
+
+<!-- DASHBOARD -->
+<section id="dashboard">
+  <div class="row">
+    <div class="stat">
+      <h3>Inventario valorizado</h3>
+      <b id="invValor">S/ 0.00</b>
+    </div>
+    <div class="stat">
+      <h3>Insumos</h3>
+      <b id="invCount">0</b>
+    </div>
+    <div class="stat">
+      <h3>Producción acumulada</h3>
+      <b id="prodCount">0</b>
+    </div>
+  </div>
+  <canvas id="chartValor" height="120"></canvas>
+</section>
+
+<!-- INSUMOS -->
+<section id="insumos" class="hidden">
+  <div class="card">
+    <h3>Inventario de Insumos</h3>
+    <table id="tblInsumos">
+      <thead>
+        <tr><th>Categoría</th><th>Insumo</th><th>Unidad</th><th>Stock</th><th>Costo</th><th>Estado</th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</section>
+
+<!-- PRODUCTOS -->
+<section id="productos" class="hidden">
+  <div class="card">
+    <h3>Productos de Venta</h3>
+    <table id="tblProductos">
+      <thead><tr><th>Producto</th><th>Precio</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</section>
+
+<!-- RECETAS -->
+<section id="recetas" class="hidden">
+  <div class="card">
+    <h3>Recetas y Packs</h3>
+    <div id="recetasList"></div>
+  </div>
+</section>
+
+<!-- PRODUCCION -->
+<section id="produccion" class="hidden">
+  <div class="card">
+    <h3>Producción / Ventas</h3>
+    <table id="tblProd">
+      <thead>
+        <tr><th>Fecha</th><th>Producto</th><th>Cantidad</th><th>Costo</th><th>Venta</th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</section>
+
+<!-- KARDEX -->
+<section id="kardex" class="hidden">
+  <div class="card">
+    <h3>Kardex (Ingresos / Salidas)</h3>
+    <table id="tblKardex">
+      <thead>
+        <tr><th>Fecha</th><th>Tipo</th><th>Insumo</th><th>Cantidad</th><th>Nota</th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</section>
+
+<!-- REPORTES -->
+<section id="reportes" class="hidden">
+  <div class="card">
+    <h3>Reporte por fecha</h3>
+    <input type="date" id="repDesde">
+    <input type="date" id="repHasta">
+    <button class="action" onclick="genReporte()">Ver reporte</button>
+    <div id="repResultado"></div>
+  </div>
+</section>
+
+</main>
+</div>
 </div>
 
 <script>
-// ======================= BASE DE DATOS =======================
-const DB = {
- insumos: JSON.parse(localStorage.getItem("insumos")||"[]"),
- productos: JSON.parse(localStorage.getItem("productos")||"[]"),
- recetas: JSON.parse(localStorage.getItem("recetas")||"[]"),
- packs: JSON.parse(localStorage.getItem("packs")||"[]"),
- produccion: JSON.parse(localStorage.getItem("produccion")||"[]"),
- kardex: JSON.parse(localStorage.getItem("kardex")||"[]"),
- rol: localStorage.getItem("rol") || "ADMIN"
+/* =======================
+   BASE DE DATOS LOCAL
+======================= */
+let DB={
+ insumos:[],
+ productos:[],
+ recetas:[],
+ packs:[],
+ produccion:[],
+ kardex:[]
 };
-function save(){
- Object.keys(DB).forEach(k=>{
-  if(k!=="rol") localStorage.setItem(k,JSON.stringify(DB[k]));
- });
+
+/* =======================
+   UI
+======================= */
+function show(id){
+ document.querySelectorAll('main section').forEach(s=>s.classList.add('hidden'));
+ document.getElementById(id).classList.remove('hidden');
+ document.querySelectorAll('aside button').forEach(b=>b.classList.remove('active'));
 }
 
-// ======================= MENU =======================
-function renderMenu(){
- document.getElementById("menu").innerHTML=`
- <button onclick="dashboard()">📊 Dashboard</button>
- <button onclick="insumos()">📦 Insumos</button>
- ${DB.rol==="ADMIN"?`
- <button onclick="productos()">💲 Productos</button>
- <button onclick="recetasView()">📖 Recetas & Packs</button>
- <button onclick="produccionView()">👩‍🍳 Producción / Ventas</button>
- <button onclick="reportes()">📆 Reportes</button>
- <button onclick="importBase()">⬆ Importar Base Excel</button>
- <button onclick="importProduccion()">⬆ Importar Producción</button>
- `:""}
- <button onclick="kardexView()">📒 Kardex</button>
- `;
+/* =======================
+   IMPORTACIONES
+======================= */
+function importBase(){
+ alert("Selecciona el Excel BASE (insumos, precio, receta, pack)");
+ filePick(handleBase);
 }
-renderMenu();
-
-// ======================= DASHBOARD =======================
-function dashboard(){
- const total = DB.insumos.reduce((s,i)=>s+(i.stock*i.costo),0);
- document.getElementById("content").innerHTML=`
- <div class="grid">
-  <div class="card"><h3>Inventario valorizado</h3><h2>S/ ${total.toFixed(2)}</h2></div>
-  <div class="card"><h3>Insumos</h3><h2>${DB.insumos.length}</h2></div>
-  <div class="card"><h3>Producciones</h3><h2>${DB.produccion.length}</h2></div>
- </div>
- <div class="card"><canvas id="chart"></canvas></div>`;
- const ctx=document.getElementById("chart");
- new Chart(ctx,{
-  type:"bar",
-  data:{
-   labels:DB.insumos.map(i=>i.nombre),
-   datasets:[{label:"Valor S/",data:DB.insumos.map(i=>i.stock*i.costo),backgroundColor:"#5eead4"}]
-  }
- });
+function importProduccion(){
+ alert("Selecciona SOLO la hoja PRODUCCION");
+ filePick(handleProduccion);
+}
+function filePick(cb){
+ let i=document.createElement('input');
+ i.type='file';
+ i.accept='.xlsx';
+ i.onchange=e=>cb(e.target.files[0]);
+ i.click();
 }
 
-// ======================= INSUMOS =======================
-function insumos(){
- let rows=DB.insumos.map(i=>{
-  let estado=i.stock<=0?"crit":i.stock<i.min?"warn":"ok";
-  return `<tr>
-   <td>${i.categoria||"INSUMOS"}</td>
-   <td>${i.nombre}</td>
-   <td>${i.stock}</td>
-   <td>S/ ${i.costo}</td>
-   <td><span class="badge ${estado}">${estado.toUpperCase()}</span></td>
-  </tr>`;
- }).join("");
- document.getElementById("content").innerHTML=`
- <div class="card">
- <h3>Insumos</h3>
- <table>
- <tr><th>Categoría</th><th>Insumo</th><th>Stock</th><th>Costo</th><th>Estado</th></tr>
- ${rows}
- </table>
- </div>`;
-}
-
-// ======================= PRODUCCIÓN =======================
-function produccionView(){
- document.getElementById("content").innerHTML=`
- <div class="card">
- <h3>Registrar Producción / Venta</h3>
- <input id="pProd" placeholder="Producto o Pack">
- <input id="pCant" type="number" placeholder="Cantidad">
- <button class="primary" onclick="guardarProduccion()">Registrar</button>
- </div>`;
-}
-
-function guardarProduccion(){
- const prod=document.getElementById("pProd").value;
- const cant=+document.getElementById("pCant").value;
- const fecha=new Date().toISOString().slice(0,10);
-
- let costoTotal=0;
- DB.recetas.filter(r=>r.producto===prod).forEach(r=>{
-  const ins=DB.insumos.find(i=>i.nombre===r.insumo);
-  if(ins){
-   const q=r.cantidad*cant;
-   ins.stock-=q;
-   costoTotal+=q*ins.costo;
-   DB.kardex.push({fecha,tipo:"PRODUCCIÓN",insumo:ins.nombre,cantidad:-q});
-  }
- });
-
- DB.produccion.push({fecha,producto:prod,cantidad:cant,costo:costoTotal});
- save(); alert("Producción registrada");
-}
-
-// ======================= KARDEX =======================
-function kardexView(){
- let rows=DB.kardex.map(k=>`
- <tr><td>${k.fecha}</td><td>${k.tipo}</td><td>${k.insumo}</td><td>${k.cantidad}</td></tr>
- `).join("");
- document.getElementById("content").innerHTML=`
- <div class="card">
- <h3>Kardex</h3>
- <table>
- <tr><th>Fecha</th><th>Tipo</th><th>Insumo</th><th>Cantidad</th></tr>
- ${rows}
- </table>
- </div>`;
-}
-
-// ======================= REPORTES =======================
-function reportes(){
- let rows=DB.produccion.map(p=>`
- <tr><td>${p.fecha}</td><td>${p.producto}</td><td>${p.cantidad}</td><td>S/ ${p.costo.toFixed(2)}</td></tr>
- `).join("");
- document.getElementById("content").innerHTML=`
- <div class="card">
- <h3>Producción por fecha</h3>
- <table>
- <tr><th>Fecha</th><th>Producto</th><th>Cantidad</th><th>Costo</th></tr>
- ${rows}
- </table>
- </div>`;
-}
-
-// ======================= IMPORTACIÓN EXCEL =======================
-function importBase(){openFile(true)}
-function importProduccion(){openFile(false)}
-
-function openFile(isBase){
- const input=document.createElement("input");
- input.type="file";
- input.accept=".xlsx";
- input.onchange=e=>readExcel(e.target.files[0],isBase);
- input.click();
-}
-
-function readExcel(file,isBase){
- const reader=new FileReader();
- reader.onload=e=>{
-  const wb=XLSX.read(new Uint8Array(e.target.result),{type:"array"});
-  if(isBase){
-   loadInsumos(wb);loadProductos(wb);loadRecetas(wb);loadPacks(wb);
-   alert("Base importada correctamente");
-  }else{
-   loadProduccion(wb);
-   alert("Producción importada correctamente");
-  }
-  save();dashboard();
+/* =======================
+   PROCESO EXCEL
+======================= */
+function handleBase(file){
+ const r=new FileReader();
+ r.onload=e=>{
+  const wb=XLSX.read(e.target.result,{type:'binary'});
+  DB.insumos=XLSX.utils.sheet_to_json(wb.Sheets.insumos||[]);
+  DB.productos=XLSX.utils.sheet_to_json(wb.Sheets.precio||[]);
+  DB.recetas=XLSX.utils.sheet_to_json(wb.Sheets.receta||[]);
+  DB.packs=XLSX.utils.sheet_to_json(wb.Sheets.pack||[]);
+  renderAll();
  };
- reader.readAsArrayBuffer(file);
+ r.readAsBinaryString(file);
 }
 
-// ======================= LOADERS =======================
-function loadInsumos(wb){
- const sh=wb.Sheets["insumos"]; if(!sh) return;
- XLSX.utils.sheet_to_json(sh).forEach(r=>{
-  DB.insumos.push({
-   nombre:r.Ingrediente,
-   unidad:r.Unidad,
-   stock:Number(r["Stock Inicial"]||0),
-   min:0,
-   costo:Number(r["Costo Unitario"]||0),
-   categoria:"INSUMOS"
-  });
+function handleProduccion(file){
+ const r=new FileReader();
+ r.onload=e=>{
+  const wb=XLSX.read(e.target.result,{type:'binary'});
+  let prod=XLSX.utils.sheet_to_json(wb.Sheets.produccion||[]);
+  DB.produccion.push(...prod);
+  renderAll();
+ };
+ r.readAsBinaryString(file);
+}
+
+/* =======================
+   RENDER
+======================= */
+function renderAll(){
+ renderInsumos();
+ renderProductos();
+ renderRecetas();
+ renderProduccion();
+ renderDashboard();
+}
+
+function renderInsumos(){
+ let tb=document.querySelector('#tblInsumos tbody');
+ tb.innerHTML='';
+ DB.insumos.forEach(i=>{
+  let estado=i.Stock_Inicial<=0?'crit':'ok';
+  tb.innerHTML+=`<tr>
+   <td>${i.Categoria||'INSUMOS'}</td>
+   <td>${i.Ingrediente}</td>
+   <td>${i.Unidad}</td>
+   <td>${i.Stock_Inicial}</td>
+   <td>S/ ${i.Costo_Unitario||0}</td>
+   <td class="${estado}">${estado==='ok'?'Normal':'Crítico'}</td>
+  </tr>`;
  });
 }
 
-function loadProductos(wb){
- const sh=wb.Sheets["precio"]; if(!sh) return;
- XLSX.utils.sheet_to_json(sh).forEach(r=>{
-  DB.productos.push({nombre:r.Producto,precio:Number(r.Precio)});
+function renderProductos(){
+ let tb=document.querySelector('#tblProductos tbody');
+ tb.innerHTML='';
+ DB.productos.forEach(p=>{
+  tb.innerHTML+=`<tr><td>${p.Producto}</td><td>S/ ${p.Precio}</td></tr>`;
  });
 }
 
-function loadRecetas(wb){
- const sh=wb.Sheets["receta"]; if(!sh) return;
- XLSX.utils.sheet_to_json(sh).forEach(r=>{
-  DB.recetas.push({producto:r.Producto,insumo:r.Ingrediente,cantidad:Number(r.Cantidad)});
+function renderRecetas(){
+ let d=document.getElementById('recetasList');
+ d.innerHTML='';
+ DB.recetas.forEach(r=>{
+  d.innerHTML+=`<div>${r.Producto} → ${r.Ingrediente} (${r.Cantidad})</div>`;
  });
 }
 
-function loadPacks(wb){
- const sh=wb.Sheets["pack"]; if(!sh) return;
- DB.packs=XLSX.utils.sheet_to_json(sh);
-}
-
-function loadProduccion(wb){
- const sh=wb.Sheets["produccion"]; if(!sh) return;
- XLSX.utils.sheet_to_json(sh).forEach(r=>{
-  DB.produccion.push({fecha:r.Fecha,producto:r.Producto,cantidad:Number(r.Cantidad)});
-  DB.recetas.filter(rc=>rc.producto===r.Producto).forEach(rc=>{
-   const ins=DB.insumos.find(i=>i.nombre===rc.insumo);
-   if(ins){
-    const q=rc.cantidad*r.Cantidad;
-    ins.stock-=q;
-    DB.kardex.push({fecha:r.Fecha,tipo:"PRODUCCIÓN",insumo:ins.nombre,cantidad:-q});
-   }
-  });
+function renderProduccion(){
+ let tb=document.querySelector('#tblProd tbody');
+ tb.innerHTML='';
+ DB.produccion.forEach(p=>{
+  tb.innerHTML+=`<tr>
+   <td>${p.F_Emisión}</td>
+   <td>${p.Item}</td>
+   <td>${p.Cantidad}</td>
+   <td>S/ 0.00</td>
+   <td>S/ ${p.Monto||0}</td>
+  </tr>`;
  });
 }
 
-// ======================= INIT =======================
-dashboard();
+function renderDashboard(){
+ document.getElementById('invCount').innerText=DB.insumos.length;
+ document.getElementById('prodCount').innerText=DB.produccion.length;
+ let total=0;
+ DB.insumos.forEach(i=>total+= (i.Stock_Inicial||0)*(i.Costo_Unitario||0));
+ document.getElementById('invValor').innerText='S/ '+total.toFixed(2);
+}
+
+/* =======================
+   REPORTES
+======================= */
+function genReporte(){
+ document.getElementById('repResultado').innerHTML=
+  `<p>Producción: ${DB.produccion.length}</p>`;
+}
 </script>
+
 </body>
 </html>
